@@ -12,7 +12,15 @@ type Settings = {
   topic: string;
   unit: string;
 };
-type Review = { score: number; feedback: string; grammarPoints: string[]; vocabulary: string[] };
+type Review = {
+  score: number;
+  feedback: string;
+  strengths: string[];
+  grammarPoints: string[];
+  naturalExpressions: string[];
+  vocabulary: string[];
+  nextGoal: string;
+};
 type Session = { id: string; date: string; settings: Settings; messages: Message[]; review: Review };
 type Question = { type: "grammar" | "vocabulary"; question: string; options: string[]; answer: number; explanation: string };
 
@@ -45,6 +53,7 @@ export default function Home() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [graded, setGraded] = useState(false);
+  const [lessonReview, setLessonReview] = useState<Review | null>(null);
 
   useEffect(() => {
     try { setSessions(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]")); } catch { setSessions([]); }
@@ -86,6 +95,7 @@ export default function Home() {
           ? `Hello! Let's talk about ${settings.topic}. What do you think about it?`
           : "Hello! Nice to meet you. How are you today?";
     setMessages([{ role: "assistant", text: opening }]);
+    setLessonReview(null);
     setNotice("");
     setStarted(true);
   }
@@ -131,7 +141,8 @@ export default function Home() {
       const next = [session, ...sessions].slice(0, 30);
       setSessions(next);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      setNotice(`保存しました！今回のスコアは ${result.review.score} 点です。`);
+      setLessonReview(result.review);
+      setNotice("");
     } catch (error) {
       setNotice(errorText(error));
     } finally {
@@ -274,7 +285,7 @@ export default function Home() {
         </section>
       )}
 
-      {tab === "lesson" && started && (
+      {tab === "lesson" && started && !lessonReview && (
         <section className="card chat chatOnly">
           <div className="chatHead">
             <button className="backButton" onClick={() => setStarted(false)}>← 設定に戻る</button>
@@ -303,6 +314,30 @@ export default function Home() {
             <button className="send" disabled={!input.trim() || busy} aria-label="送信">➤</button>
           </form>
           <button className="finish" disabled={!turns || busy} onClick={finishLesson}>レッスンを終了して分析・保存</button>
+        </section>
+      )}
+
+      {tab === "lesson" && started && lessonReview && (
+        <section className="card lessonReview">
+          <div className="reviewHero">
+            <em>AI TEACHER&apos;S FEEDBACK</em>
+            <h1>AI先生からの振り返り</h1>
+            <div className="reviewScore"><strong>{lessonReview.score}</strong><span>/ 100点</span></div>
+            <p>{lessonReview.feedback}</p>
+          </div>
+
+          <div className="reviewGrid">
+            <ReviewBlock icon="✨" title="良かったところ" items={lessonReview.strengths} empty="会話を最後まで続けられたことが素晴らしいです。" />
+            <ReviewBlock icon="📝" title="直すともっと良くなる文法" items={lessonReview.grammarPoints} empty="大きな文法ミスはありませんでした。" />
+            <ReviewBlock icon="💡" title="より自然な言い方" items={lessonReview.naturalExpressions} empty="今回の表現は自然に伝わっています。" />
+            <ReviewBlock icon="📚" title="覚えておきたい単語" items={lessonReview.vocabulary} empty="新しい単語にも挑戦してみましょう。" />
+          </div>
+
+          <div className="nextGoal"><span>🎯 次の目標</span><b>{lessonReview.nextGoal || "今日覚えた表現を、次の会話でもう一度使ってみよう！"}</b></div>
+          <div className="reviewActions">
+            <button className="subAction" onClick={() => setTab("history")}>履歴を見る</button>
+            <button className="primaryAction" onClick={() => { setStarted(false); setLessonReview(null); setMessages([]); }}>次のレッスンへ</button>
+          </div>
         </section>
       )}
 
@@ -366,6 +401,10 @@ export default function Home() {
 
 function ChoiceGroup({ title, values, labels, selected, onSelect }: { title: string; values: string[]; labels?: string[]; selected: string; onSelect: (value: string) => void }) {
   return <div className="fieldBlock"><b>{title}</b><div className="choiceRow">{values.map((value, index) => <button key={value} className={selected === value ? "selected" : ""} onClick={() => onSelect(value)}>{labels?.[index] || value}</button>)}</div></div>;
+}
+function ReviewBlock({ icon, title, items, empty }: { icon: string; title: string; items?: string[]; empty: string }) {
+  const content = items?.filter(Boolean) || [];
+  return <article className="reviewBlock"><h2><span>{icon}</span>{title}</h2><ul>{(content.length ? content : [empty]).map((item, index) => <li key={index}>{item}</li>)}</ul></article>;
 }
 function getClientId() { let id = localStorage.getItem("speakup-client-id"); if (!id) { id = crypto.randomUUID(); localStorage.setItem("speakup-client-id", id); } return id; }
 function speak(text: string) { if (!("speechSynthesis" in window)) return; speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = "en-US"; utterance.rate = 0.9; speechSynthesis.speak(utterance); }

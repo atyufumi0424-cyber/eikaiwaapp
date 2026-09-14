@@ -22,7 +22,7 @@ export async function POST(req:NextRequest){
    const settings=safeSettings(b.settings);
    const log=safeHistory(b.history).slice(-20).map(m=>`${m.role}: ${m.text}`).join("\n").slice(0,6000);
    if(!log)return fail("分析する会話がありません。",400);
-   const prompt=`Analyze this English learner conversation. Learner: ${settings.level}, target: ${settings.targetLevel}. Return Japanese feedback as JSON only. Conversation:\n${log}\nSchema: {"score":number 0-100,"feedback":"short Japanese feedback","grammarPoints":["up to 3 specific corrections"],"vocabulary":["up to 6 English words with Japanese meanings"]}`;
+   const prompt=`You are a kind English teacher. Analyze this learner conversation and give motivating, specific feedback in easy Japanese. Learner: ${settings.level}, target: ${settings.targetLevel}, CEFR: ${settings.cefr}, lesson: ${settings.mode === "grammar" ? settings.unit : settings.topic || "free talk"}. Base every correction on the actual conversation. For naturalExpressions, show "learner's wording → more natural English（short Japanese note）". Conversation:\n${log}\nReturn JSON only. Schema: {"score":number 0-100,"feedback":"2-3 sentence overall comment in Japanese","strengths":["up to 3 concrete good points"],"grammarPoints":["up to 3 corrections with corrected English"],"naturalExpressions":["up to 3 improved expressions"],"vocabulary":["up to 6 English words or phrases with Japanese meanings"],"nextGoal":"one easy, concrete goal for the next lesson"}`;
    const data=await groq(keys,b.clientId,jsonPayload(prompt,700));
    return ok({review:normalizeReview(parseJson(data.choices?.[0]?.message?.content))});
   }
@@ -47,7 +47,8 @@ function safeSettings(x:any):Settings{return{level:clean(x?.level,30)||"中学�
 function clean(v:unknown,max:number){return typeof v==="string"?v.replace(/[\u0000-\u001f]/g," ").trim().slice(0,max):""}
 function hash(s:string){let h=2166136261;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return h>>>0}
 function parseJson(t:unknown):any{if(typeof t!=="string")return null;try{return JSON.parse(t.replace(/^\`\`\`json\s*|\`\`\`$/g,"").trim())}catch{return null}}
-function normalizeReview(x:any){return{score:Math.max(0,Math.min(100,Number(x?.score)||0)),feedback:clean(x?.feedback,800)||"よく頑張りました。",grammarPoints:Array.isArray(x?.grammarPoints)?x.grammarPoints.slice(0,3).map((v:unknown)=>clean(v,240)):[],vocabulary:Array.isArray(x?.vocabulary)?x.vocabulary.slice(0,6).map((v:unknown)=>clean(v,120)):[]}}
+function normalizeReview(x:any){return{score:Math.max(0,Math.min(100,Number(x?.score)||0)),feedback:clean(x?.feedback,800)||"よく頑張りました。",strengths:list(x?.strengths,3,240),grammarPoints:list(x?.grammarPoints,3,280),naturalExpressions:list(x?.naturalExpressions,3,280),vocabulary:list(x?.vocabulary,6,160),nextGoal:clean(x?.nextGoal,300)||"今日覚えた表現を、次の会話でもう一度使ってみよう！"}}
+function list(value:unknown,maxItems:number,maxLength:number){return Array.isArray(value)?value.slice(0,maxItems).map(v=>clean(v,maxLength)).filter(Boolean):[]}
 function normalizeQuestions(x:unknown){if(!Array.isArray(x))return[];return x.slice(0,10).filter(q=>q&&["grammar","vocabulary"].includes(q.type)&&typeof q.question==="string"&&Array.isArray(q.options)&&q.options.length===4&&Number.isInteger(q.answer)&&q.answer>=0&&q.answer<4).map(q=>({type:q.type,question:clean(q.question,500),options:q.options.map((v:unknown)=>clean(v,180)),answer:q.answer,explanation:clean(q.explanation,600)}))}
 function ok(data:object){return NextResponse.json(data,{headers:{"Cache-Control":"no-store"}})}
 function fail(error:string,status:number){return NextResponse.json({error},{status,headers:{"Cache-Control":"no-store"}})}
