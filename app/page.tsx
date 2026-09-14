@@ -1,30 +1,405 @@
 "use client";
-import{FormEvent,useEffect,useMemo,useState}from"react";
-type Message={role:"user"|"assistant";text:string};
-type Settings={level:string;targetLevel:string;cefr:"A0"|"A1"|"A2"|"B1";mode:"free"|"grammar"|"custom";topic:string;unit:string};
-type Review={score:number;feedback:string;grammarPoints:string[];vocabulary:string[]};
-type Session={id:string;date:string;settings:Settings;messages:Message[];review:Review};
-type Question={type:"grammar"|"vocabulary";question:string;options:string[];answer:number;explanation:string};
-const KEY="speakup-sessions-v1",defaults:Settings={level:"中学2年生",targetLevel:"英検3級",cefr:"A1",mode:"free",topic:"",unit:"過去形・過去進行形"};
-export default function Home(){
- const[tab,setTab]=useState<"talk"|"test"|"history">("talk"),[settings,setSettings]=useState(defaults);
- const[messages,setMessages]=useState<Message[]>([{role:"assistant",text:"Hello! What did you do today?"}]),[input,setInput]=useState(""),[busy,setBusy]=useState(false),[notice,setNotice]=useState("");
- const[sessions,setSessions]=useState<Session[]>([]),[questions,setQuestions]=useState<Question[]>([]),[answers,setAnswers]=useState<Record<number,number>>({}),[graded,setGraded]=useState(false);
- useEffect(()=>{try{setSessions(JSON.parse(localStorage.getItem(KEY)||"[]"))}catch{}},[]);
- const turns=messages.filter(m=>m.role==="user").length,score=useMemo(()=>questions.reduce((n,q,i)=>n+(answers[i]===q.answer?1:0),0),[answers,questions]);
- async function api(action:string,data:object){const c=new AbortController(),t=setTimeout(()=>c.abort(),18000);try{const r=await fetch("/api/ai",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action,...data}),signal:c.signal}),j=await r.json();if(!r.ok)throw Error(j.error||"通信に失敗しました");return j}finally{clearTimeout(t)}}
- async function send(e:FormEvent){e.preventDefault();const text=input.trim();if(!text||busy)return;const next=[...messages,{role:"user" as const,text}];setMessages(next);setInput("");setBusy(true);setNotice("");try{const r=await api("chat",{message:text,history:messages,settings,clientId:id()});setMessages([...next,{role:"assistant",text:r.text}]);speak(r.text)}catch(e){setNotice(err(e))}finally{setBusy(false)}}
- async function finish(){if(!turns||busy)return;setBusy(true);setNotice("会話を分析しています…");try{const r=await api("review",{history:messages,settings,clientId:id()}),s={id:crypto.randomUUID(),date:new Date().toISOString(),settings,messages,review:r.review},next=[s,...sessions].slice(0,30);setSessions(next);localStorage.setItem(KEY,JSON.stringify(next));setNotice(`保存しました！今回のスコアは ${r.review.score} 点です。`)}catch(e){setNotice(err(e))}finally{setBusy(false)}}
- async function makeTest(){if(!sessions.length||busy)return;setBusy(true);setNotice("履歴から問題を作成しています…");setAnswers({});setGraded(false);try{const compact=sessions.slice(0,10).map(s=>({level:s.settings.targetLevel,userEnglish:s.messages.filter(m=>m.role==="user").map(m=>m.text).join(" / ").slice(0,1200),review:s.review})),r=await api("summaryTest",{sessions:compact,clientId:id()});setQuestions(r.questions);setNotice("")}catch(e){setNotice(err(e))}finally{setBusy(false)}}
- function listen(){const R=(window as any).webkitSpeechRecognition;if(!R){setNotice("このブラウザでは音声入力を利用できません。文字で入力してください。");return}const r=new R();r.lang="en-US";r.interimResults=false;r.onresult=(e:any)=>setInput(e.results[0][0].transcript);r.onerror=()=>setNotice("音声を聞き取れませんでした。");r.start()}
- function restart(){const t=settings.mode==="grammar"?`Hello! Let's practice ${settings.unit||"English grammar"}. Are you ready?`:settings.mode==="custom"?`Hello! Let's talk about ${settings.topic||"your favorite topic"}. What do you like about it?`:"Hello! What would you like to talk about today?";setMessages([{role:"assistant",text:t}]);setNotice("")}
- return <main><header><div className="brand"><i>S</i><div><b>SpeakUp!</b><small>AI ENGLISH PARTNER</small></div></div><nav><button className={tab==="talk"?"on":""} onClick={()=>setTab("talk")}>会話</button><button className={tab==="test"?"on":""} onClick={()=>setTab("test")}>まとめテスト</button><button className={tab==="history"?"on":""} onClick={()=>setTab("history")}>履歴</button></nav></header>
- {tab==="talk"&&<div className="layout"><aside className="card"><h2>レッスン設定</h2><label>学年<select value={settings.level} onChange={e=>{const level=e.target.value;setSettings({...settings,level,unit:unitsFor(level)[0]})}}>{["中学1年生","中学2年生","中学3年生","高校生"].map(x=><option key={x}>{x}</option>)}</select></label><label>目標レベル<select value={settings.targetLevel} onChange={e=>setSettings({...settings,targetLevel:e.target.value})}>{["英検5級","英検4級","英検3級","英検準2級","英検2級"].map(x=><option key={x}>{x}</option>)}</select></label><label>AIの英語レベル<select value={settings.cefr} onChange={e=>setSettings({...settings,cefr:e.target.value as Settings["cefr"]})}><option value="A0">A0 はじめて</option><option value="A1">A1 初級</option><option value="A2">A2 基礎</option><option value="B1">B1 中級</option></select></label><label>モード<select value={settings.mode} onChange={e=>setSettings({...settings,mode:e.target.value as Settings["mode"]})}><option value="free">フリートーク</option><option value="grammar">単元別・文法練習</option><option value="custom">好きな話題</option></select></label>{settings.mode==="grammar"&&<label>練習する単元<select value={settings.unit} onChange={e=>setSettings({...settings,unit:e.target.value})}>{unitsFor(settings.level).map(x=><option key={x}>{x}</option>)}</select></label>}{settings.mode==="custom"&&<label>話したい話題<input value={settings.topic} onChange={e=>setSettings({...settings,topic:e.target.value})} placeholder="例：テニス"/></label>}<button className="sub" onClick={restart}>設定を反映して最初から</button><div className="tip"><b>40人でも快適に</b><p>音声処理と履歴保存は端末側で行い、AIに送る文章量を抑えます。</p></div></aside>
- <section className="card chat"><div className="chatHead"><div><em>TODAY'S LESSON · CEFR {settings.cefr}</em><h1>{settings.mode==="free"?"Free Conversation":settings.mode==="grammar"?settings.unit:settings.topic||"Topic Lesson"}</h1></div><span>{turns} turns</span></div><div className="messages">{messages.map((m,i)=><div className={`row ${m.role}`} key={i}><i>{m.role==="assistant"?"AI":"YOU"}</i><p>{m.text}{m.role==="assistant"&&<button onClick={()=>speak(m.text)}>🔊</button>}</p></div>)}{busy&&<div className="row assistant"><i>AI</i><p>Thinking •••</p></div>}</div>{notice&&<div className="notice">{notice}</div>}<form onSubmit={send}><button type="button" className="mic" onClick={listen}>🎙️</button><input maxLength={500} value={input} onChange={e=>setInput(e.target.value)} placeholder="英語で話してみよう…"/><button className="send" disabled={!input.trim()||busy}>➤</button></form><button className="finish" disabled={!turns||busy} onClick={finish}>レッスンを終了して分析・保存</button></section></div>}
- {tab==="test"&&<section className="card single"><em>REVIEW</em><h1>総まとめ文法・単語テスト</h1><p className="lead">保存した英会話の間違いや、実際に使った単語から自分専用の問題を作ります。</p>{!sessions.length&&<div className="empty">まず英会話を1回行い、「分析・保存」してください。</div>}<button className="primary" disabled={!sessions.length||busy} onClick={makeTest}>{questions.length?"新しい問題を作る":"履歴から10問作る"}</button>{notice&&<div className="notice">{notice}</div>}{questions.map((q,i)=><article className="question" key={i}><b>{i+1}. {q.type==="grammar"?"文法":"単語"}</b><h3>{q.question}</h3><div className="options">{q.options.map((o,j)=><button key={j} disabled={graded} className={(answers[i]===j?"selected ":"")+(graded&&j===q.answer?"correct ":"")+(graded&&answers[i]===j&&j!==q.answer?"wrong":"")} onClick={()=>setAnswers({...answers,[i]:j})}>{String.fromCharCode(65+j)}. {o}</button>)}</div>{graded&&<p className="explain">{q.explanation}</p>}</article>)}{!!questions.length&&!graded&&<button className="primary" disabled={Object.keys(answers).length!==questions.length} onClick={()=>setGraded(true)}>採点する</button>}{graded&&<div className="result"><b>{score} / {questions.length}</b><span>{score>=8?"すばらしい！":score>=6?"あと少し！":"履歴を見て復習しよう！"}</span></div>}</section>}
- {tab==="history"&&<section className="card single"><em>MY PROGRESS</em><h1>英会話の履歴</h1>{!sessions.length&&<div className="empty">保存されたレッスンはまだありません。</div>}{sessions.map(s=><details key={s.id}><summary><div><b>{new Date(s.date).toLocaleDateString("ja-JP")}・{s.settings.mode==="free"?"フリートーク":s.settings.topic}</b><small>{s.settings.targetLevel} / {s.messages.filter(m=>m.role==="user").length} turns</small></div><strong>{s.review.score}点</strong></summary><div className="review"><p>{s.review.feedback}</p><b>文法ポイント</b><ul>{s.review.grammarPoints.map((x,i)=><li key={i}>{x}</li>)}</ul><b>復習単語</b><div className="chips">{s.review.vocabulary.map((x,i)=><span key={i}>{x}</span>)}</div></div></details>)}</section>}<footer>SpeakUp! — 会話して、気づいて、もう一度使おう。</footer></main>
+
+import { FormEvent, useEffect, useMemo, useState } from "react";
+
+type Message = { role: "user" | "assistant"; text: string };
+type Mode = "grammar" | "free" | "custom";
+type Settings = {
+  level: string;
+  targetLevel: string;
+  cefr: "A0" | "A1" | "A2" | "B1";
+  mode: Mode;
+  topic: string;
+  unit: string;
+};
+type Review = { score: number; feedback: string; grammarPoints: string[]; vocabulary: string[] };
+type Session = { id: string; date: string; settings: Settings; messages: Message[]; review: Review };
+type Question = { type: "grammar" | "vocabulary"; question: string; options: string[]; answer: number; explanation: string };
+
+const STORAGE_KEY = "speakup-sessions-v1";
+const initialSettings: Settings = {
+  level: "中学2年生",
+  targetLevel: "英検3級",
+  cefr: "A1",
+  mode: "grammar",
+  topic: "",
+  unit: "過去形・過去進行形",
+};
+
+const modes: { value: Mode; icon: string; title: string; description: string }[] = [
+  { value: "grammar", icon: "📘", title: "単元の文法で会話", description: "習った文法を実際の会話で使う" },
+  { value: "free", icon: "💬", title: "フリートーク", description: "好きな内容を自由に話す" },
+  { value: "custom", icon: "🎯", title: "お題を決めて会話", description: "興味のあるテーマで話す" },
+];
+
+export default function Home() {
+  const [tab, setTab] = useState<"lesson" | "test" | "history">("lesson");
+  const [started, setStarted] = useState(false);
+  const [settings, setSettings] = useState(initialSettings);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [listening, setListening] = useState(false);
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [questions, setQuestions] = useState<Question[]>([]);
+  const [answers, setAnswers] = useState<Record<number, number>>({});
+  const [graded, setGraded] = useState(false);
+
+  useEffect(() => {
+    try { setSessions(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]")); } catch { setSessions([]); }
+  }, []);
+
+  const turns = messages.filter((m) => m.role === "user").length;
+  const score = useMemo(
+    () => questions.reduce((total, question, index) => total + (answers[index] === question.answer ? 1 : 0), 0),
+    [answers, questions],
+  );
+
+  async function callApi(action: string, data: object) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch("/api/ai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ...data }),
+        signal: controller.signal,
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "通信に失敗しました。");
+      return result;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function startLesson() {
+    if (settings.mode === "custom" && !settings.topic.trim()) {
+      setNotice("話したいお題を入力してください。");
+      return;
+    }
+    const opening =
+      settings.mode === "grammar"
+        ? openingForUnit(settings.unit, settings.cefr)
+        : settings.mode === "custom"
+          ? `Hello! Let's talk about ${settings.topic}. What do you think about it?`
+          : "Hello! Nice to meet you. How are you today?";
+    setMessages([{ role: "assistant", text: opening }]);
+    setNotice("");
+    setStarted(true);
+  }
+
+  async function sendMessage(event: FormEvent) {
+    event.preventDefault();
+    const text = input.trim();
+    if (!text || busy) return;
+    const next = [...messages, { role: "user" as const, text }];
+    setMessages(next);
+    setInput("");
+    setBusy(true);
+    setNotice("");
+    try {
+      const result = await callApi("chat", {
+        message: text,
+        history: messages,
+        settings,
+        clientId: getClientId(),
+      });
+      setMessages([...next, { role: "assistant", text: result.text }]);
+      speak(result.text);
+    } catch (error) {
+      setNotice(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finishLesson() {
+    if (!turns || busy) return;
+    setBusy(true);
+    setNotice("会話を振り返っています…");
+    try {
+      const result = await callApi("review", { history: messages, settings, clientId: getClientId() });
+      const session: Session = {
+        id: crypto.randomUUID(),
+        date: new Date().toISOString(),
+        settings,
+        messages,
+        review: result.review,
+      };
+      const next = [session, ...sessions].slice(0, 30);
+      setSessions(next);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setNotice(`保存しました！今回のスコアは ${result.review.score} 点です。`);
+    } catch (error) {
+      setNotice(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function makeTest() {
+    if (!sessions.length || busy) return;
+    setBusy(true);
+    setNotice("履歴から問題を作っています…");
+    setAnswers({});
+    setGraded(false);
+    try {
+      const compact = sessions.slice(0, 10).map((session) => ({
+        level: session.settings.targetLevel,
+        cefr: session.settings.cefr,
+        unit: session.settings.unit,
+        userEnglish: session.messages.filter((m) => m.role === "user").map((m) => m.text).join(" / ").slice(0, 1200),
+        review: session.review,
+      }));
+      const result = await callApi("summaryTest", { sessions: compact, clientId: getClientId() });
+      setQuestions(result.questions);
+      setNotice("");
+    } catch (error) {
+      setNotice(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startListening() {
+    const Recognition = (window as Window & { webkitSpeechRecognition?: new () => any }).webkitSpeechRecognition;
+    if (!Recognition) {
+      setNotice("このブラウザでは音声入力を利用できません。文字で入力してください。");
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.onstart = () => setListening(true);
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => {
+      setListening(false);
+      setNotice("うまく聞き取れませんでした。もう一度押して話してください。");
+    };
+    recognition.onresult = (event: any) => setInput(event.results[0][0].transcript);
+    recognition.start();
+  }
+
+  return (
+    <main>
+      <header>
+        <button className="brand brandButton" onClick={() => { setTab("lesson"); setStarted(false); }}>
+          <i>S</i><span><b>SpeakUp!</b><small>AI ENGLISH PARTNER</small></span>
+        </button>
+        <nav>
+          <button className={tab === "lesson" ? "on" : ""} onClick={() => setTab("lesson")}>レッスン</button>
+          <button className={tab === "test" ? "on" : ""} onClick={() => setTab("test")}>まとめテスト</button>
+          <button className={tab === "history" ? "on" : ""} onClick={() => setTab("history")}>履歴</button>
+        </nav>
+      </header>
+
+      {tab === "lesson" && !started && (
+        <section className="setup">
+          <div className="setupTitle">
+            <em>NEW LESSON</em>
+            <h1>今日はどんな英会話をする？</h1>
+            <p>会話の練習方法とレベルを選んでください。</p>
+          </div>
+
+          <div className="modeGrid">
+            {modes.map((mode) => (
+              <button
+                key={mode.value}
+                className={`modeCard ${settings.mode === mode.value ? "selected" : ""}`}
+                onClick={() => setSettings({ ...settings, mode: mode.value })}
+              >
+                <span className="modeIcon">{mode.icon}</span>
+                <b>{mode.title}</b>
+                <small>{mode.description}</small>
+                <span className="check">✓</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="setupCard">
+            <ChoiceGroup
+              title="学年"
+              values={["中学1年生", "中学2年生", "中学3年生", "高校生"]}
+              selected={settings.level}
+              onSelect={(level) => setSettings({ ...settings, level, unit: unitsFor(level)[0] })}
+            />
+            <ChoiceGroup
+              title="AIの英語レベル"
+              values={["A0", "A1", "A2", "B1"]}
+              labels={["A0 はじめて", "A1 初級", "A2 基礎", "B1 中級"]}
+              selected={settings.cefr}
+              onSelect={(cefr) => setSettings({ ...settings, cefr: cefr as Settings["cefr"] })}
+            />
+            <ChoiceGroup
+              title="目標"
+              values={["英検5級", "英検4級", "英検3級", "英検準2級", "英検2級"]}
+              selected={settings.targetLevel}
+              onSelect={(targetLevel) => setSettings({ ...settings, targetLevel })}
+            />
+
+            {settings.mode === "grammar" && (
+              <div className="fieldBlock">
+                <b>練習する単元</b>
+                <div className="unitGrid">
+                  {unitsFor(settings.level).map((unit) => (
+                    <button
+                      key={unit}
+                      className={settings.unit === unit ? "selected" : ""}
+                      onClick={() => setSettings({ ...settings, unit })}
+                    >{unit}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {settings.mode === "custom" && (
+              <label className="topicField">
+                <b>話したいお題</b>
+                <input
+                  value={settings.topic}
+                  onChange={(event) => setSettings({ ...settings, topic: event.target.value })}
+                  placeholder="例：テニス、好きな音楽、行きたい国"
+                  maxLength={60}
+                />
+              </label>
+            )}
+          </div>
+
+          {notice && <div className="notice setupNotice">{notice}</div>}
+          <button className="startButton" onClick={startLesson}>
+            <span>会話を始める</span><span>→</span>
+          </button>
+        </section>
+      )}
+
+      {tab === "lesson" && started && (
+        <section className="card chat chatOnly">
+          <div className="chatHead">
+            <button className="backButton" onClick={() => setStarted(false)}>← 設定に戻る</button>
+            <div>
+              <em>{modeName(settings.mode)} · CEFR {settings.cefr}</em>
+              <h1>{lessonTitle(settings)}</h1>
+            </div>
+            <span>{turns} turns</span>
+          </div>
+          <div className="messages">
+            {messages.map((message, index) => (
+              <div className={`row ${message.role}`} key={index}>
+                <i>{message.role === "assistant" ? "AI" : "YOU"}</i>
+                <p>
+                  {message.text}
+                  {message.role === "assistant" && <button onClick={() => speak(message.text)} aria-label="英語を読み上げる">🔊</button>}
+                </p>
+              </div>
+            ))}
+            {busy && <div className="row assistant"><i>AI</i><p>Thinking •••</p></div>}
+          </div>
+          {notice && <div className="notice">{notice}</div>}
+          <form onSubmit={sendMessage}>
+            <button type="button" className={`mic ${listening ? "recording" : ""}`} onClick={startListening} aria-label="音声入力">🎙️</button>
+            <input maxLength={500} value={input} onChange={(event) => setInput(event.target.value)} placeholder="英語で話す・入力する…" />
+            <button className="send" disabled={!input.trim() || busy} aria-label="送信">➤</button>
+          </form>
+          <button className="finish" disabled={!turns || busy} onClick={finishLesson}>レッスンを終了して分析・保存</button>
+        </section>
+      )}
+
+      {tab === "test" && (
+        <section className="card single">
+          <em>REVIEW</em><h1>総まとめ文法・単語テスト</h1>
+          <p className="lead">保存した会話から、自分専用の問題を作ります。</p>
+          {!sessions.length && <div className="empty">まず英会話を1回行い、「分析・保存」してください。</div>}
+          <button className="primary" disabled={!sessions.length || busy} onClick={makeTest}>{questions.length ? "新しい問題を作る" : "履歴から10問作る"}</button>
+          {notice && <div className="notice">{notice}</div>}
+          {questions.map((question, index) => (
+            <article className="question" key={index}>
+              <b>{index + 1}. {question.type === "grammar" ? "文法" : "単語"}</b>
+              <h3>{question.question}</h3>
+              <div className="options">
+                {question.options.map((option, optionIndex) => (
+                  <button
+                    key={optionIndex}
+                    disabled={graded}
+                    className={(answers[index] === optionIndex ? "selected " : "") + (graded && optionIndex === question.answer ? "correct " : "") + (graded && answers[index] === optionIndex && optionIndex !== question.answer ? "wrong" : "")}
+                    onClick={() => setAnswers({ ...answers, [index]: optionIndex })}
+                  >{String.fromCharCode(65 + optionIndex)}. {option}</button>
+                ))}
+              </div>
+              {graded && <p className="explain">{question.explanation}</p>}
+            </article>
+          ))}
+          {!!questions.length && !graded && <button className="primary" disabled={Object.keys(answers).length !== questions.length} onClick={() => setGraded(true)}>採点する</button>}
+          {graded && <div className="result"><b>{score} / {questions.length}</b><span>{score >= 8 ? "すばらしい！" : score >= 6 ? "あと少し！" : "履歴を見て復習しよう！"}</span></div>}
+        </section>
+      )}
+
+      {tab === "history" && (
+        <section className="card single">
+          <em>MY PROGRESS</em><h1>英会話の履歴</h1>
+          {!sessions.length && <div className="empty">保存されたレッスンはまだありません。</div>}
+          {sessions.map((session) => (
+            <details key={session.id}>
+              <summary>
+                <div>
+                  <b>{new Date(session.date).toLocaleDateString("ja-JP")}・{lessonTitle(session.settings)}</b>
+                  <small>CEFR {session.settings.cefr || "A1"} / {session.messages.filter((m) => m.role === "user").length} turns</small>
+                </div>
+                <strong>{session.review.score}点</strong>
+              </summary>
+              <div className="review">
+                <p>{session.review.feedback}</p>
+                <b>文法ポイント</b>
+                <ul>{session.review.grammarPoints.map((point, index) => <li key={index}>{point}</li>)}</ul>
+                <b>復習単語</b>
+                <div className="chips">{session.review.vocabulary.map((word, index) => <span key={index}>{word}</span>)}</div>
+              </div>
+            </details>
+          ))}
+        </section>
+      )}
+      <footer>SpeakUp! — 会話して、気づいて、もう一度使おう。</footer>
+    </main>
+  );
 }
-function id(){let x=localStorage.getItem("speakup-client-id");if(!x){x=crypto.randomUUID();localStorage.setItem("speakup-client-id",x)}return x}
-function speak(t:string){if(!("speechSynthesis"in window))return;speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang="en-US";u.rate=.9;speechSynthesis.speak(u)}
-function err(e:unknown){return e instanceof DOMException&&e.name==="AbortError"?"応答に時間がかかっています。少し待ってから再度お試しください。":e instanceof Error?e.message:"エラーが発生しました。"}
-function unitsFor(level:string){if(level==="中学1年生")return["be動詞","一般動詞","疑問文・否定文","can","現在進行形","過去形"];if(level==="中学2年生")return["過去形・過去進行形","未来表現","助動詞","不定詞","動名詞","比較級・最上級","接続詞","受け身"];if(level==="中学3年生")return["現在完了","現在完了進行形","不定詞の応用","分詞","関係代名詞","間接疑問文","仮定法"];return["時制","助動詞","受動態","不定詞・動名詞","分詞構文","関係詞","比較","仮定法"]}
+
+function ChoiceGroup({ title, values, labels, selected, onSelect }: { title: string; values: string[]; labels?: string[]; selected: string; onSelect: (value: string) => void }) {
+  return <div className="fieldBlock"><b>{title}</b><div className="choiceRow">{values.map((value, index) => <button key={value} className={selected === value ? "selected" : ""} onClick={() => onSelect(value)}>{labels?.[index] || value}</button>)}</div></div>;
+}
+function getClientId() { let id = localStorage.getItem("speakup-client-id"); if (!id) { id = crypto.randomUUID(); localStorage.setItem("speakup-client-id", id); } return id; }
+function speak(text: string) { if (!("speechSynthesis" in window)) return; speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = "en-US"; utterance.rate = 0.9; speechSynthesis.speak(utterance); }
+function errorText(error: unknown) { return error instanceof DOMException && error.name === "AbortError" ? "応答に時間がかかっています。少し待ってからもう一度お試しください。" : error instanceof Error ? error.message : "エラーが発生しました。"; }
+function modeName(mode: Mode) { return mode === "grammar" ? "単元文法" : mode === "custom" ? "お題トーク" : "フリートーク"; }
+function lessonTitle(settings: Settings) { return settings.mode === "grammar" ? settings.unit : settings.mode === "custom" ? settings.topic || "お題トーク" : "Free Conversation"; }
+function openingForUnit(unit: string, cefr: string) {
+  const examples: Record<string, string> = {
+    "be動詞": "Hello! I am your English partner. How are you today?",
+    "一般動詞": "Hello! I like music and sports. What do you like?",
+    "疑問文・否定文": "Hello! Let's ask questions today. Do you like sports?",
+    "can": "Hello! I can speak English. What can you do?",
+    "現在進行形": "Hello! I am talking with you now. What are you doing?",
+    "過去形": "Hello! I watched a movie yesterday. What did you do?",
+    "過去形・過去進行形": "Hello! I was reading last night. What were you doing?",
+    "未来表現": "Hello! I am going to study tonight. What are you going to do?",
+    "助動詞": "Hello! We should practice English. What should we talk about?",
+    "不定詞": "Hello! I want to learn about you. What do you want to do?",
+    "動名詞": "Hello! I enjoy learning languages. What do you enjoy doing?",
+    "比較級・最上級": "Hello! Summer is hotter than spring. Which season do you like best?",
+    "接続詞": "Hello! I am happy because we can talk. What makes you happy?",
+    "受け身": "Hello! English is spoken around the world. Where is English used?",
+    "現在完了": "Hello! I have visited many places. Have you ever traveled far?",
+    "現在完了進行形": "Hello! I have been waiting to talk with you. What have you been doing?",
+    "分詞": "Hello! I saw an exciting game. What was exciting for you?",
+    "関係代名詞": "Hello! A friend who helps you is special. Who is important to you?",
+    "間接疑問文": "Hello! I wonder what you like. Can you tell me?",
+    "仮定法": "Hello! If I could travel anywhere, I would visit Japan. Where would you go?",
+  };
+  return examples[unit] || (cefr === "A0" ? "Hello! I am happy. Are you happy?" : `Hello! Let's practice ${unit}. Are you ready?`);
+}
+function unitsFor(level: string) {
+  if (level === "中学1年生") return ["be動詞", "一般動詞", "疑問文・否定文", "can", "現在進行形", "過去形"];
+  if (level === "中学2年生") return ["過去形・過去進行形", "未来表現", "助動詞", "不定詞", "動名詞", "比較級・最上級", "接続詞", "受け身"];
+  if (level === "中学3年生") return ["現在完了", "現在完了進行形", "不定詞の応用", "分詞", "関係代名詞", "間接疑問文", "仮定法"];
+  return ["時制", "助動詞", "受動態", "不定詞・動名詞", "分詞構文", "関係詞", "比較", "仮定法"];
+}
