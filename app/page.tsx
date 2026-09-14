@@ -49,6 +49,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [listening, setListening] = useState(false);
+  const [audioSpeed, setAudioSpeed] = useState<"slow" | "normal">("normal");
   const [sessions, setSessions] = useState<Session[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<number, number>>({});
@@ -117,7 +118,7 @@ export default function Home() {
         clientId: getClientId(),
       });
       setMessages([...next, { role: "assistant", text: result.text }]);
-      speak(result.text);
+      void speakNatural(result.text, audioSpeed);
     } catch (error) {
       setNotice(errorText(error));
     } finally {
@@ -295,13 +296,20 @@ export default function Home() {
             </div>
             <span>{turns} turns</span>
           </div>
+          <div className="voiceSettings">
+            <span>🔊 ネイティブ音声</span>
+            <div>
+              <button className={audioSpeed === "slow" ? "selected" : ""} onClick={() => setAudioSpeed("slow")}>ゆっくり</button>
+              <button className={audioSpeed === "normal" ? "selected" : ""} onClick={() => setAudioSpeed("normal")}>普通</button>
+            </div>
+          </div>
           <div className="messages">
             {messages.map((message, index) => (
               <div className={`row ${message.role}`} key={index}>
                 <i>{message.role === "assistant" ? "AI" : "YOU"}</i>
                 <p>
                   {message.text}
-                  {message.role === "assistant" && <button onClick={() => speak(message.text)} aria-label="英語を読み上げる">🔊</button>}
+                  {message.role === "assistant" && <button onClick={() => void speakNatural(message.text, audioSpeed)} aria-label="ネイティブ音声で読み上げる">🔊</button>}
                 </p>
               </div>
             ))}
@@ -407,7 +415,24 @@ function ReviewBlock({ icon, title, items, empty }: { icon: string; title: strin
   return <article className="reviewBlock"><h2><span>{icon}</span>{title}</h2><ul>{(content.length ? content : [empty]).map((item, index) => <li key={index}>{item}</li>)}</ul></article>;
 }
 function getClientId() { let id = localStorage.getItem("speakup-client-id"); if (!id) { id = crypto.randomUUID(); localStorage.setItem("speakup-client-id", id); } return id; }
-function speak(text: string) { if (!("speechSynthesis" in window)) return; speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = "en-US"; utterance.rate = 0.9; speechSynthesis.speak(utterance); }
+let activeAudio: HTMLAudioElement | null = null;
+async function speakNatural(text: string, speed: "slow" | "normal") {
+  try {
+    activeAudio?.pause();
+    const response = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    if (!response.ok) throw new Error("TTS unavailable");
+    const url = URL.createObjectURL(await response.blob());
+    const audio = new Audio(url);
+    activeAudio = audio;
+    audio.playbackRate = speed === "slow" ? 0.82 : 1;
+    audio.onended = () => { URL.revokeObjectURL(url); if (activeAudio === audio) activeAudio = null; };
+    audio.onerror = () => URL.revokeObjectURL(url);
+    await audio.play();
+  } catch {
+    fallbackSpeak(text, speed);
+  }
+}
+function fallbackSpeak(text: string, speed: "slow" | "normal") { if (!("speechSynthesis" in window)) return; speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = "en-US"; utterance.rate = speed === "slow" ? 0.72 : 0.9; speechSynthesis.speak(utterance); }
 function errorText(error: unknown) { return error instanceof DOMException && error.name === "AbortError" ? "応答に時間がかかっています。少し待ってからもう一度お試しください。" : error instanceof Error ? error.message : "エラーが発生しました。"; }
 function modeName(mode: Mode) { return mode === "grammar" ? "単元文法" : mode === "custom" ? "お題トーク" : "フリートーク"; }
 function lessonTitle(settings: Settings) { return settings.mode === "grammar" ? settings.unit : settings.mode === "custom" ? settings.topic || "お題トーク" : "Free Conversation"; }
