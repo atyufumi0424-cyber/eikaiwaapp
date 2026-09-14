@@ -16,6 +16,12 @@ type Settings = {
 type Review = {
   score: number;
   feedback: string;
+  breakdown?: {
+    communication: { score: number; reason: string };
+    grammar: { score: number; reason: string };
+    vocabulary: { score: number; reason: string };
+    interaction: { score: number; reason: string };
+  };
   strengths: string[];
   grammarPoints: string[];
   naturalExpressions: string[];
@@ -341,6 +347,16 @@ export default function Home() {
             <ReviewBlock icon="📚" title="覚えておきたい単語" items={lessonReview.vocabulary} empty="新しい単語にも挑戦してみましょう。" />
           </div>
 
+          {lessonReview.breakdown && (
+            <div className="scoreBreakdown">
+              <h2>採点の内訳</h2>
+              <ScoreRow label="伝わりやすさ" value={lessonReview.breakdown.communication.score} max={30} reason={lessonReview.breakdown.communication.reason} />
+              <ScoreRow label="文法" value={lessonReview.breakdown.grammar.score} max={25} reason={lessonReview.breakdown.grammar.reason} />
+              <ScoreRow label="語彙" value={lessonReview.breakdown.vocabulary.score} max={20} reason={lessonReview.breakdown.vocabulary.reason} />
+              <ScoreRow label="会話の継続" value={lessonReview.breakdown.interaction.score} max={25} reason={lessonReview.breakdown.interaction.reason} />
+            </div>
+          )}
+
           <div className="nextGoal"><span>🎯 次の目標</span><b>{lessonReview.nextGoal || "今日覚えた表現を、次の会話でもう一度使ってみよう！"}</b></div>
           <div className="reviewActions">
             <button className="subAction" onClick={() => setTab("history")}>履歴を見る</button>
@@ -413,6 +429,9 @@ function ChoiceGroup({ title, values, labels, selected, onSelect }: { title: str
 function ReviewBlock({ icon, title, items, empty }: { icon: string; title: string; items?: string[]; empty: string }) {
   const content = items?.filter(Boolean) || [];
   return <article className="reviewBlock"><h2><span>{icon}</span>{title}</h2><ul>{(content.length ? content : [empty]).map((item, index) => <li key={index}>{item}</li>)}</ul></article>;
+}
+function ScoreRow({ label, value, max, reason }: { label: string; value: number; max: number; reason: string }) {
+  return <div className="scoreRow"><div><b>{label}</b><span>{reason}</span></div><div className="scoreBar"><i style={{ width: `${Math.max(0, Math.min(100, value / max * 100))}%` }} /></div><strong>{value}<small>/{max}</small></strong></div>;
 }
 function getClientId() { let id = localStorage.getItem("speakup-client-id"); if (!id) { id = crypto.randomUUID(); localStorage.setItem("speakup-client-id", id); } return id; }
 let activeAudio: HTMLAudioElement | null = null;

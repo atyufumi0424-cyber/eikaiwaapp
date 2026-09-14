@@ -20,11 +20,21 @@ export async function POST(req:NextRequest){
   }
   if(action==="review"){
    const settings=safeSettings(b.settings);
-   const log=safeHistory(b.history).slice(-20).map(m=>`${m.role}: ${m.text}`).join("\n").slice(0,6000);
+   const conversation=safeHistory(b.history).slice(-20);
+   const log=conversation.map(m=>`${m.role}: ${m.text}`).join("\n").slice(0,6000);
    if(!log)return fail("分析する会話がありません。",400);
-   const prompt=`You are a kind English teacher. Analyze this learner conversation and give motivating, specific feedback in easy Japanese. Learner: ${settings.level}, selected level: ${selectedLevel(settings)}, lesson: ${settings.mode === "grammar" ? settings.unit : settings.topic || "free talk"}. Base every correction on the actual conversation. For naturalExpressions, show "learner's wording → more natural English（short Japanese note）". Conversation:\n${log}\nReturn JSON only. Schema: {"score":number 0-100,"feedback":"2-3 sentence overall comment in Japanese","strengths":["up to 3 concrete good points"],"grammarPoints":["up to 3 corrections with corrected English"],"naturalExpressions":["up to 3 improved expressions"],"vocabulary":["up to 6 English words or phrases with Japanese meanings"],"nextGoal":"one easy, concrete goal for the next lesson"}`;
+   const prompt=`You are a kind but consistent English teacher. Analyze this learner conversation in easy Japanese. Learner: ${settings.level}, selected level: ${selectedLevel(settings)}, lesson: ${settings.mode === "grammar" ? settings.unit : settings.topic || "free talk"}.
+
+Use exactly this 100-point rubric. Grade only skills expected at the selected level; do not penalize the learner for grammar beyond that level.
+1. communication (0-30): Did the meaning get across, and were answers relevant? 24-30=consistently clear, 16-23=mostly clear, 8-15=partly clear, 0-7=almost no meaningful English.
+2. grammar (0-25): Accuracy of level-appropriate grammar and the selected unit. 20-25=mostly accurate, 13-19=some errors but understandable, 6-12=frequent errors, 0-5=no assessable sentences.
+3. vocabulary (0-20): Appropriate vocabulary and variety. 16-20=varied and suitable, 10-15=basic but effective, 5-9=very limited, 0-4=almost none.
+4. interaction (0-25): Continued the exchange with answers, detail, or questions. 20-25=actively developed conversation, 13-19=continued normally, 6-12=mostly one-word replies, 0-5=barely participated.
+The total score MUST equal the sum of the four category scores. Do not give zero merely because the conversation is short. Base corrections only on actual learner messages. For naturalExpressions, show "learner's wording → more natural English（short Japanese note）".
+
+Conversation:\n${log}\nReturn JSON only. Schema: {"score":number,"breakdown":{"communication":{"score":number,"reason":"Japanese"},"grammar":{"score":number,"reason":"Japanese"},"vocabulary":{"score":number,"reason":"Japanese"},"interaction":{"score":number,"reason":"Japanese"}},"feedback":"2-3 sentence overall comment in Japanese","strengths":["up to 3 concrete good points"],"grammarPoints":["up to 3 corrections with corrected English"],"naturalExpressions":["up to 3 improved expressions"],"vocabulary":["up to 6 English words or phrases with Japanese meanings"],"nextGoal":"one easy, concrete goal for the next lesson"}`;
    const data=await groq(keys,b.clientId,jsonPayload(prompt,700));
-   return ok({review:normalizeReview(parseJson(data.choices?.[0]?.message?.content))});
+   return ok({review:normalizeReview(parseJson(data.choices?.[0]?.message?.content),conversation)});
   }
   const sessions=Array.isArray(b.sessions)?b.sessions.slice(0,10):[];
   if(!sessions.length)return fail("テストを作る履歴がありません。",400);
@@ -49,7 +59,9 @@ function eikenToCefr(level:string){if(level.includes("2級")&&!level.includes("�
 function clean(v:unknown,max:number){return typeof v==="string"?v.replace(/[\u0000-\u001f]/g," ").trim().slice(0,max):""}
 function hash(s:string){let h=2166136261;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return h>>>0}
 function parseJson(t:unknown):any{if(typeof t!=="string")return null;const cleaned=t.replace(/^\`\`\`(?:json)?\s*|\`\`\`$/g,"").trim();try{return JSON.parse(cleaned)}catch{const start=cleaned.indexOf("{"),end=cleaned.lastIndexOf("}");if(start<0||end<=start)return null;try{return JSON.parse(cleaned.slice(start,end+1))}catch{return null}}}
-function normalizeReview(x:any){return{score:Math.max(0,Math.min(100,Number(x?.score)||0)),feedback:clean(x?.feedback,800)||"よく頑張りました。",strengths:list(x?.strengths,3,240),grammarPoints:list(x?.grammarPoints,3,280),naturalExpressions:list(x?.naturalExpressions,3,280),vocabulary:list(x?.vocabulary,6,160),nextGoal:clean(x?.nextGoal,300)||"今日覚えた表現を、次の会話でもう一度使ってみよう！"}}
+function normalizeReview(x:any,conversation:Msg[]){const fallback=fallbackBreakdown(conversation);const raw=x?.breakdown||{};const breakdown={communication:rubricPart(raw.communication,30,fallback.communication,"英語で意味を伝えようとできました。"),grammar:rubricPart(raw.grammar,25,fallback.grammar,"学習レベルに合った文法を使えました。"),vocabulary:rubricPart(raw.vocabulary,20,fallback.vocabulary,"会話に必要な単語を使えました。"),interaction:rubricPart(raw.interaction,25,fallback.interaction,"相手の質問に答えて会話を続けました。")};const score=breakdown.communication.score+breakdown.grammar.score+breakdown.vocabulary.score+breakdown.interaction.score;return{score,breakdown,feedback:clean(x?.feedback,800)||"最後まで英語で会話できました。内訳を見て、次の練習につなげましょう。",strengths:list(x?.strengths,3,240),grammarPoints:list(x?.grammarPoints,3,280),naturalExpressions:list(x?.naturalExpressions,3,280),vocabulary:list(x?.vocabulary,6,160),nextGoal:clean(x?.nextGoal,300)||"今日使った表現を、次の会話でもう一度使ってみよう！"}}
+function rubricPart(value:any,max:number,fallback:number,fallbackReason:string){const parsed=Number(value?.score);return{score:Number.isFinite(parsed)?Math.round(Math.max(0,Math.min(max,parsed))):fallback,reason:clean(value?.reason,240)||fallbackReason}}
+function fallbackBreakdown(conversation:Msg[]){const user=conversation.filter(m=>m.role==="user"),words=user.flatMap(m=>m.text.match(/[A-Za-z']+/g)||[]),turns=user.length,long=user.filter(m=>(m.text.match(/[A-Za-z']+/g)||[]).length>=4).length;return{communication:Math.min(24,12+turns*2),grammar:Math.min(20,11+long*2),vocabulary:Math.min(16,8+Math.floor(new Set(words.map(w=>w.toLowerCase())).size/4)),interaction:Math.min(20,8+turns*2)}}
 function list(value:unknown,maxItems:number,maxLength:number){return Array.isArray(value)?value.slice(0,maxItems).map(v=>clean(v,maxLength)).filter(Boolean):[]}
 function normalizeQuestions(x:unknown){if(!Array.isArray(x))return[];return x.slice(0,10).filter(q=>q&&["grammar","vocabulary"].includes(q.type)&&typeof q.question==="string"&&Array.isArray(q.options)&&q.options.length===4&&Number.isInteger(q.answer)&&q.answer>=0&&q.answer<4).map(q=>({type:q.type,question:clean(q.question,500),options:q.options.map((v:unknown)=>clean(v,180)),answer:q.answer,explanation:clean(q.explanation,600)}))}
 function ok(data:object){return NextResponse.json(data,{headers:{"Cache-Control":"no-store"}})}
