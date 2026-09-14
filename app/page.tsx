@@ -8,6 +8,7 @@ type Settings = {
   level: string;
   targetLevel: string;
   cefr: "A0" | "A1" | "A2" | "B1";
+  proficiencyType: "cefr" | "eiken";
   mode: Mode;
   topic: string;
   unit: string;
@@ -29,6 +30,7 @@ const initialSettings: Settings = {
   level: "中学2年生",
   targetLevel: "英検3級",
   cefr: "A1",
+  proficiencyType: "cefr",
   mode: "grammar",
   topic: "",
   unit: "過去形・過去進行形",
@@ -159,8 +161,7 @@ export default function Home() {
     setGraded(false);
     try {
       const compact = sessions.slice(0, 10).map((session) => ({
-        level: session.settings.targetLevel,
-        cefr: session.settings.cefr,
+        level: levelName(session.settings),
         unit: session.settings.unit,
         userEnglish: session.messages.filter((m) => m.role === "user").map((m) => m.text).join(" / ").slice(0, 1200),
         review: session.review,
@@ -238,18 +239,17 @@ export default function Home() {
               onSelect={(level) => setSettings({ ...settings, level, unit: unitsFor(level)[0] })}
             />
             <ChoiceGroup
-              title="AIの英語レベル"
-              values={["A0", "A1", "A2", "B1"]}
-              labels={["A0 はじめて", "A1 初級", "A2 基礎", "B1 中級"]}
-              selected={settings.cefr}
-              onSelect={(cefr) => setSettings({ ...settings, cefr: cefr as Settings["cefr"] })}
+              title="レベルの選び方（どちらか1つ）"
+              values={["cefr", "eiken"]}
+              labels={["CEFR（A0〜B1）で選ぶ", "英検（5級〜2級）で選ぶ"]}
+              selected={settings.proficiencyType}
+              onSelect={(proficiencyType) => setSettings({ ...settings, proficiencyType: proficiencyType as Settings["proficiencyType"] })}
             />
-            <ChoiceGroup
-              title="目標"
-              values={["英検5級", "英検4級", "英検3級", "英検準2級", "英検2級"]}
-              selected={settings.targetLevel}
-              onSelect={(targetLevel) => setSettings({ ...settings, targetLevel })}
-            />
+            {settings.proficiencyType === "cefr" ? (
+              <ChoiceGroup title="CEFRレベル" values={["A0", "A1", "A2", "B1"]} labels={["A0 はじめて", "A1 初級", "A2 基礎", "B1 中級"]} selected={settings.cefr} onSelect={(cefr) => setSettings({ ...settings, cefr: cefr as Settings["cefr"] })} />
+            ) : (
+              <ChoiceGroup title="英検レベル" values={["英検5級", "英検4級", "英検3級", "英検準2級", "英検2級"]} selected={settings.targetLevel} onSelect={(targetLevel) => setSettings({ ...settings, targetLevel })} />
+            )}
 
             {settings.mode === "grammar" && (
               <div className="fieldBlock">
@@ -291,7 +291,7 @@ export default function Home() {
           <div className="chatHead">
             <button className="backButton" onClick={() => setStarted(false)}>← 設定に戻る</button>
             <div>
-              <em>{modeName(settings.mode)} · CEFR {settings.cefr}</em>
+              <em>{modeName(settings.mode)} · {levelName(settings)}</em>
               <h1>{lessonTitle(settings)}</h1>
             </div>
             <span>{turns} turns</span>
@@ -387,7 +387,7 @@ export default function Home() {
               <summary>
                 <div>
                   <b>{new Date(session.date).toLocaleDateString("ja-JP")}・{lessonTitle(session.settings)}</b>
-                  <small>CEFR {session.settings.cefr || "A1"} / {session.messages.filter((m) => m.role === "user").length} turns</small>
+                  <small>{levelName(session.settings)} / {session.messages.filter((m) => m.role === "user").length} turns</small>
                 </div>
                 <strong>{session.review.score}点</strong>
               </summary>
@@ -436,6 +436,7 @@ function fallbackSpeak(text: string, speed: "slow" | "normal") { if (!("speechSy
 function errorText(error: unknown) { return error instanceof DOMException && error.name === "AbortError" ? "応答に時間がかかっています。少し待ってからもう一度お試しください。" : error instanceof Error ? error.message : "エラーが発生しました。"; }
 function modeName(mode: Mode) { return mode === "grammar" ? "単元文法" : mode === "custom" ? "お題トーク" : "フリートーク"; }
 function lessonTitle(settings: Settings) { return settings.mode === "grammar" ? settings.unit : settings.mode === "custom" ? settings.topic || "お題トーク" : "Free Conversation"; }
+function levelName(settings: Settings) { return settings.proficiencyType === "eiken" ? settings.targetLevel : `CEFR ${settings.cefr || "A1"}`; }
 function openingForUnit(unit: string, cefr: string) {
   const examples: Record<string, string> = {
     "be動詞": "Hello! I am your English partner. How are you today?",
