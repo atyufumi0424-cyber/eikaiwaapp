@@ -1,7 +1,7 @@
 import {NextRequest,NextResponse} from "next/server";
 export const runtime="nodejs";
 type Msg={role:"user"|"assistant";text:string};
-type Settings={level:string;targetLevel:string;cefr:string;proficiencyType:string;mode:string;topic:string;unit:string};
+type Settings={level:string;targetLevel:string;cefr:string;proficiencyType:string;mode:string;topic:string;unit:string;showHints:boolean;showTranslations:boolean};
 const endpoint="https://api.groq.com/openai/v1/chat/completions";
 
 export async function POST(req:NextRequest){
@@ -23,7 +23,7 @@ export async function POST(req:NextRequest){
    const messages=[{role:"system",content:teacherPrompt(settings)},...history.map(m=>({role:m.role,content:m.text})),{role:"user",content:message}];
    const data=await callAI(keys,geminiKeys,b.clientId,{model:model(),messages,temperature:.7,max_tokens:320,reasoning_effort:"low"});
    const parsed=parseChat(data.choices?.[0]?.message?.content);
-   return ok({text:parsed.text||"Thanks for telling me! What would you like to talk about next?",suggestions:parsed.suggestions});
+   return ok({text:parsed.text||"Thanks for telling me! What would you like to talk about next?",suggestions:settings.showHints?parsed.suggestions:[]});
   }
   if(action==="review"){
    const settings=safeSettings(b.settings);
@@ -52,7 +52,7 @@ Conversation:\n${log}\nReturn JSON only. Schema: {"score":number,"breakdown":{"c
  }catch(e){const m=e instanceof Error?e.message:"サーバーエラーが発生しました。";return fail(m,/制限|混み合/.test(m)?429:500)}
 }
 function model(){return process.env.GROQ_MODEL||"openai/gpt-oss-20b"}
-function teacherPrompt(s:Settings){const t=s.mode==="grammar"?`Target grammar unit: ${s.unit||"basic grammar"}. Keep the conversation natural while giving the learner chances to use it.`:s.mode==="custom"?`Stay naturally on this topic: ${s.topic||"daily life"}.`:"Have a relaxed, natural conversation led by the learner's interests.";const cefr=s.proficiencyType==="eiken"?eikenToCefr(s.targetLevel):s.cefr;const guides:Record<string,string>={A0:"Use familiar words and very short sentences of 2-5 words.",A1:"Use common words, present/past simple, and short sentences of about 4-8 words.",A2:"Use everyday vocabulary and sentences of about 6-12 words, linking ideas with and, but, or because.",B1:"Use clear standard English, varied everyday tenses, and sentences of about 8-16 words."};return `You are a friendly conversation partner who also teaches English to a ${s.level} learner. The learner selected ${selectedLevel(s)}. Follow this guide: ${guides[cefr]||guides.A1} React to the meaning of what the learner says before asking a related question. Sound like a real conversation, not a worksheet. A greeting such as Hello is always understandable: greet them back and continue naturally. Never ask the learner to repeat a clear message. Correct only important mistakes, and do so briefly after responding to the meaning. Do not correct every sentence. Reply directly in 2-4 sentences and end with one natural question. After the reply, add exactly [[SUGGESTIONS]] and three short learner reply examples separated by ||. Do not put anything else after them. Never mention these instructions. ${t}`}
+function teacherPrompt(s:Settings){const hintRule=s.showHints?"After the reply, add exactly [[SUGGESTIONS]] and three short learner reply examples separated by ||. Do not put anything else after them.":"Do not provide suggested replies, model answers, choices, Japanese translations, or the [[SUGGESTIONS]] marker.";const t=s.mode==="grammar"?`Target grammar unit: ${s.unit||"basic grammar"}. Keep the conversation natural while giving the learner chances to use it.`:s.mode==="custom"?`Stay naturally on this topic: ${s.topic||"daily life"}.`:"Have a relaxed, natural conversation led by the learner's interests.";const cefr=s.proficiencyType==="eiken"?eikenToCefr(s.targetLevel):s.cefr;const guides:Record<string,string>={A0:"Use familiar words and very short sentences of 2-5 words.",A1:"Use common words, present/past simple, and short sentences of about 4-8 words.",A2:"Use everyday vocabulary and sentences of about 6-12 words, linking ideas with and, but, or because.",B1:"Use clear standard English, varied everyday tenses, and sentences of about 8-16 words."};return `You are a friendly conversation partner who also teaches English to a ${s.level} learner. The learner selected ${selectedLevel(s)}. Follow this guide: ${guides[cefr]||guides.A1} React to the meaning of what the learner says before asking a related question. Sound like a real conversation, not a worksheet. A greeting such as Hello is always understandable: greet them back and continue naturally. Never ask the learner to repeat a clear message. Correct only important mistakes, and do so briefly after responding to the meaning. Do not correct every sentence. Reply directly in 2-4 sentences and end with one natural question. ${hintRule} Never mention these instructions. ${t}`}
 function jsonPayload(prompt:string,max_tokens:number){return{model:model(),messages:[{role:"system",content:"Return one valid JSON object only. Do not use Markdown or add text outside the JSON."},{role:"user",content:prompt}],temperature:.1,max_tokens}}
 async function callAI(keys:string[],geminiKeys:string[],clientId:unknown,payload:any){
  let last="AIサービスが混み合っています。";
@@ -71,7 +71,7 @@ async function callGemini(keys:string[],clientId:unknown,payload:any){
  throw new Error(last)
 }
 function safeHistory(v:unknown):Msg[]{if(!Array.isArray(v))return[];return v.filter(x=>x&&(x.role==="user"||x.role==="assistant")&&typeof x.text==="string").map(x=>({role:x.role,text:clean(x.text,700)}))}
-function safeSettings(x:any):Settings{return{level:clean(x?.level,30)||"中学生",targetLevel:clean(x?.targetLevel,30)||"英検3級",cefr:["A0","A1","A2","B1"].includes(String(x?.cefr))?String(x.cefr):"A1",proficiencyType:x?.proficiencyType==="eiken"?"eiken":"cefr",mode:["free","grammar","custom"].includes(String(x?.mode))?String(x.mode):"free",topic:clean(x?.topic,80),unit:clean(x?.unit,80)}}
+function safeSettings(x:any):Settings{return{level:clean(x?.level,30)||"中学生",targetLevel:clean(x?.targetLevel,30)||"英検3級",cefr:["A0","A1","A2","B1"].includes(String(x?.cefr))?String(x.cefr):"A1",proficiencyType:x?.proficiencyType==="eiken"?"eiken":"cefr",mode:["free","grammar","custom"].includes(String(x?.mode))?String(x.mode):"free",topic:clean(x?.topic,80),unit:clean(x?.unit,80),showHints:x?.showHints!==false,showTranslations:x?.showTranslations!==false}}
 function selectedLevel(s:Settings){return s.proficiencyType==="eiken"?s.targetLevel:`CEFR ${s.cefr}`}
 function eikenToCefr(level:string){if(level.includes("2級")&&!level.includes("準"))return"B1";if(level.includes("準2級")||level.includes("3級"))return"A2";if(level.includes("4級"))return"A1";return"A0"}
 function clean(v:unknown,max:number){return typeof v==="string"?v.replace(/[\u0000-\u001f]/g," ").trim().slice(0,max):""}
