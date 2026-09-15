@@ -7,7 +7,7 @@ const endpoint="https://api.groq.com/openai/v1/chat/completions";
 export async function POST(req:NextRequest){
  try{
   const b=await req.json(),action=String(b.action||"");
-  if(!["chat","review","summaryTest","translate"].includes(action))return fail("不正な操作です。",400);
+  if(!["chat","review","summaryTest","translate","groupQuiz"].includes(action))return fail("不正な操作です。",400);
   const keys=(process.env.GROQ_API_KEYS||process.env.GROQ_API_KEY||"").split(/[\n,]+/).map(k=>k.trim()).filter(k=>k.startsWith("gsk_"));
   const geminiKeys=(process.env.GEMINI_API_KEYS||process.env.GEMINI_API_KEY||"").split(/[\n,]+/).map(k=>k.trim()).filter(Boolean);
   if(!keys.length&&!geminiKeys.length)return fail("サーバーにAI APIキーが設定されていません。",503);
@@ -24,6 +24,13 @@ export async function POST(req:NextRequest){
    const data=await callAI(keys,geminiKeys,b.clientId,{model:model(),messages,temperature:.7,max_tokens:320,reasoning_effort:"low"});
    const parsed=parseChat(data.choices?.[0]?.message?.content);
    return ok({text:parsed.text||"Thanks for telling me! What would you like to talk about next?",suggestions:settings.showHints?parsed.suggestions:[]});
+  }
+  if(action==="groupQuiz"){
+   const settings=safeSettings(b.settings),count=Math.max(5,Math.min(15,Number(b.count)||10));
+   const prompt=`Create exactly ${count} fun four-choice English grammar quiz questions for ${settings.level}, ${selectedLevel(settings)}. Unit: ${settings.unit||"basic grammar"}. Questions and explanations must be in easy Japanese. English answer choices should be short. Include a mix of fill-in-the-blank and choosing the natural sentence. Exactly one correct answer per question. Return JSON only. Schema: {"questions":[{"type":"grammar","question":"...","options":["...","...","...","..."],"answer":0,"explanation":"..."}]}`;
+   const data=await callAI(keys,geminiKeys,b.clientId,jsonPayload(prompt,2600)),questions=normalizeQuestions(parseJson(data.choices?.[0]?.message?.content)?.questions).slice(0,count);
+   if(questions.length!==count)return fail("問題生成に失敗しました。もう一度お試しください。",502);
+   return ok({questions});
   }
   if(action==="review"){
    const settings=safeSettings(b.settings);
