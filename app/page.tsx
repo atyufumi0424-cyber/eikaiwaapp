@@ -205,7 +205,7 @@ export default function Home() {
     <main>
       <header>
         <button className="brand brandButton" onClick={() => { setTab("lesson"); setStarted(false); }}>
-          <img className="brandLogo" src="/icon-192.png" alt="" /><span><b>SpeakUp!</b><small>AI ENGLISH PARTNER</small></span>
+          <img className="brandLogo" src="/speakup-icon-192.png" alt="" /><span><b>SpeakUp!</b><small>AI ENGLISH PARTNER</small></span>
         </button>
         <nav>
           <button className={tab === "lesson" ? "on" : ""} onClick={() => setTab("lesson")}>レッスン</button>
