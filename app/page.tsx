@@ -13,6 +13,8 @@ type Settings = {
   mode: Mode;
   topic: string;
   unit: string;
+  showHints: boolean;
+  showTranslations: boolean;
 };
 type Review = {
   score: number;
@@ -41,6 +43,8 @@ const initialSettings: Settings = {
   mode: "grammar",
   topic: "",
   unit: "過去形・過去進行形",
+  showHints: true,
+  showTranslations: true,
 };
 
 const modes: { value: Mode; icon: string; title: string; description: string }[] = [
@@ -151,7 +155,7 @@ export default function Home() {
         clientId: getClientId(),
       });
       setMessages([...next, { role: "assistant", text: result.text }]);
-      setSuggestions(Array.isArray(result.suggestions) ? result.suggestions.slice(0, 3) : []);
+      setSuggestions(settings.showHints && Array.isArray(result.suggestions) ? result.suggestions.slice(0, 3) : []);
       setFailedMessage("");
       void speakNatural(result.text, audioSpeed);
     } catch (error) {
@@ -169,7 +173,7 @@ export default function Home() {
       const history = messages.slice(0, -1);
       const result = await callApi("chat", { message: failedMessage, history, settings, clientId: getClientId() });
       setMessages([...messages, { role: "assistant", text: result.text }]);
-      setSuggestions(Array.isArray(result.suggestions) ? result.suggestions.slice(0, 3) : []);
+      setSuggestions(settings.showHints && Array.isArray(result.suggestions) ? result.suggestions.slice(0, 3) : []);
       setFailedMessage(""); setNotice(""); void speakNatural(result.text, audioSpeed);
     } catch (error) { setNotice(errorText(error)); } finally { setBusy(false); }
   }
@@ -360,6 +364,25 @@ export default function Home() {
               </label>
             )}
             <ChoiceGroup title="会話時間" values={["0", "5", "10", "15"]} labels={["時間制限なし", "5分", "10分", "15分"]} selected={String(lessonMinutes)} onSelect={(value) => setLessonMinutes(Number(value))} />
+
+            <div className="supportSettings">
+              <div className="supportHeading">
+                <span>⚙️</span><div><b>学習サポート設定</b><small>答えのヒントになる機能を個別に設定できます</small></div>
+              </div>
+              <SupportToggle
+                title="返答ヒント"
+                description="会話中に英語の返答例を表示します"
+                enabled={settings.showHints}
+                onToggle={() => { setSettings({ ...settings, showHints: !settings.showHints }); setSuggestions([]); }}
+              />
+              <SupportToggle
+                title="日本語訳"
+                description="AIの英文に日本語訳ボタンを表示します"
+                enabled={settings.showTranslations}
+                onToggle={() => { setSettings({ ...settings, showTranslations: !settings.showTranslations }); setTranslations({}); }}
+              />
+              {!settings.showHints && !settings.showTranslations && <p className="supportModeNote">集中モード：ヒントと日本語訳を表示しません</p>}
+            </div>
           </div>
 
           <div className="setupTools"><button onClick={() => void makeShareQr()}>▦ この設定のQRを作る</button></div>
@@ -395,7 +418,7 @@ export default function Home() {
               <div className={`row ${message.role}`} key={index}>
                 <i>{message.role === "assistant" ? "AI" : "YOU"}</i>
                 <div className="bubbleWrap"><p>{message.text}</p>
-                  {message.role === "assistant" && <div className="messageActions"><button onClick={() => void speakNatural(message.text, audioSpeed)}>🔊 聞く</button><button onClick={() => void showTranslation(message.text, index)}>🇯🇵 訳</button><button onClick={() => startPronunciation(message.text)}>🎤 発音</button></div>}
+                  {message.role === "assistant" && <div className="messageActions"><button onClick={() => void speakNatural(message.text, audioSpeed)}>🔊 聞く</button>{settings.showTranslations && <button onClick={() => void showTranslation(message.text, index)}>🇯🇵 訳</button>}<button onClick={() => startPronunciation(message.text)}>🎤 発音</button></div>}
                   {translations[index] && <div className="translation">{translations[index]}</div>}
                 </div>
               </div>
@@ -403,7 +426,7 @@ export default function Home() {
             {busy && <div className="row assistant"><i>AI</i><p>Thinking •••</p></div>}
           </div>
           {pronunciation && <div className="practicePanel"><button className="closeMini" onClick={() => setPronunciation(null)}>×</button><b>発音練習</b><p>{pronunciation.target}</p><button className="practiceButton" onClick={recordPronunciation}>{listening ? "聞き取り中…" : "🎙️ この英文を言う"}</button>{pronunciation.heard && <div className="pronunciationResult"><strong>{pronunciation.score}点</strong><span>聞こえた英語：{pronunciation.heard}</span><small>音声認識との一致度による簡易評価です。</small></div>}</div>}
-          {!!suggestions.length && <div className="suggestions"><b>返答例</b>{suggestions.map((suggestion) => <button key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div>}
+          {settings.showHints && !!suggestions.length && <div className="suggestions"><b>返答例</b>{suggestions.map((suggestion) => <button key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div>}
           {notice && <div className="notice">{notice}{failedMessage && <button className="retryButton" onClick={retryMessage}>もう一度送る</button>}</div>}
           <form onSubmit={sendMessage}>
             <button type="button" className={`mic ${listening ? "recording" : ""}`} onClick={startListening} aria-label="音声入力">🎙️</button>
@@ -512,6 +535,9 @@ export default function Home() {
 function ChoiceGroup({ title, values, labels, selected, onSelect }: { title: string; values: string[]; labels?: string[]; selected: string; onSelect: (value: string) => void }) {
   return <div className="fieldBlock"><b>{title}</b><div className="choiceRow">{values.map((value, index) => <button key={value} className={selected === value ? "selected" : ""} onClick={() => onSelect(value)}>{labels?.[index] || value}</button>)}</div></div>;
 }
+function SupportToggle({ title, description, enabled, onToggle }: { title: string; description: string; enabled: boolean; onToggle: () => void }) {
+  return <button type="button" className={`supportToggle ${enabled ? "enabled" : ""}`} onClick={onToggle} aria-pressed={enabled}><span><b>{title}</b><small>{description}</small></span><i>{enabled ? "ON" : "OFF"}</i></button>;
+}
 function ReviewBlock({ icon, title, items, empty }: { icon: string; title: string; items?: string[]; empty: string }) {
   const content = items?.filter(Boolean) || [];
   return <article className="reviewBlock"><h2><span>{icon}</span>{title}</h2><ul>{(content.length ? content : [empty]).map((item, index) => <li key={index}>{item}</li>)}</ul></article>;
@@ -581,12 +607,12 @@ function pronunciationScore(target: string, heard: string) {
   return Math.max(0, Math.round((1 - rows[a.length] / Math.max(a.length, b.length, 1)) * 100));
 }
 function sharedSettingsUrl(settings: Settings) {
-  const url = new URL(window.location.origin + window.location.pathname); const params = new URLSearchParams({ shared: "1", grade: settings.level, type: settings.proficiencyType, cefr: settings.cefr, eiken: settings.targetLevel, mode: settings.mode, unit: settings.unit, topic: settings.topic }); url.search = params.toString(); return url.toString();
+  const url = new URL(window.location.origin + window.location.pathname); const params = new URLSearchParams({ shared: "1", grade: settings.level, type: settings.proficiencyType, cefr: settings.cefr, eiken: settings.targetLevel, mode: settings.mode, unit: settings.unit, topic: settings.topic, hints: settings.showHints ? "1" : "0", translation: settings.showTranslations ? "1" : "0" }); url.search = params.toString(); return url.toString();
 }
 function readSharedSettings(): Settings | null {
   const params = new URLSearchParams(window.location.search); if (params.get("shared") !== "1") return null;
   const level = params.get("grade") || initialSettings.level, mode = (["grammar", "free", "custom"].includes(params.get("mode") || "") ? params.get("mode") : "grammar") as Mode, cefr = (["A0", "A1", "A2", "B1"].includes(params.get("cefr") || "") ? params.get("cefr") : "A1") as Settings["cefr"];
-  return { level, targetLevel: params.get("eiken") || initialSettings.targetLevel, cefr, proficiencyType: params.get("type") === "eiken" ? "eiken" : "cefr", mode, unit: params.get("unit") || unitsFor(level)[0], topic: params.get("topic") || "" };
+  return { level, targetLevel: params.get("eiken") || initialSettings.targetLevel, cefr, proficiencyType: params.get("type") === "eiken" ? "eiken" : "cefr", mode, unit: params.get("unit") || unitsFor(level)[0], topic: params.get("topic") || "", showHints: params.get("hints") !== "0", showTranslations: params.get("translation") !== "0" };
 }
 function validSession(value: any): value is Session { return value && typeof value.id === "string" && typeof value.date === "string" && value.settings && Array.isArray(value.messages) && value.review && typeof value.review.score === "number"; }
 function sessionSearchText(session: Session) { return `${new Date(session.date).toLocaleDateString("ja-JP")} ${lessonTitle(session.settings)} ${levelName(session.settings)} ${session.messages.map((message) => message.text).join(" ")}`.toLowerCase(); }
