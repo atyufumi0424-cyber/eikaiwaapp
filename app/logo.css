@@ -1,0 +1,8 @@
+.brandLogo {
+  width: 42px;
+  height: 42px;
+  display: block;
+  border-radius: 13px;
+  object-fit: cover;
+  flex: 0 0 auto;
+}
