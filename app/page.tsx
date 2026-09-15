@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
 
 type Message = { role: "user" | "assistant"; text: string };
 type Mode = "grammar" | "free" | "custom";
@@ -63,10 +64,30 @@ export default function Home() {
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [graded, setGraded] = useState(false);
   const [lessonReview, setLessonReview] = useState<Review | null>(null);
+  const [lessonMinutes, setLessonMinutes] = useState(10);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [translations, setTranslations] = useState<Record<number, string>>({});
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [failedMessage, setFailedMessage] = useState("");
+  const [pronunciation, setPronunciation] = useState<{ target: string; heard?: string; score?: number } | null>(null);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [shareQr, setShareQr] = useState("");
+  const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     try { setSessions(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]")); } catch { setSessions([]); }
+    const shared = readSharedSettings();
+    if (shared) { setSettings(shared); setNotice("共有されたレッスン設定を読み込みました。"); }
   }, []);
+
+  useEffect(() => {
+    if (!started || lessonReview || !secondsLeft) return;
+    const timer = window.setInterval(() => setSecondsLeft((value) => {
+      if (value <= 1) { window.clearInterval(timer); setNotice("レッスン時間になりました。会話を終了して振り返りましょう！"); return 0; }
+      return value - 1;
+    }), 1000);
+    return () => window.clearInterval(timer);
+  }, [started, lessonReview, secondsLeft > 0]);
 
   const turns = messages.filter((m) => m.role === "user").length;
   const score = useMemo(
@@ -105,6 +126,10 @@ export default function Home() {
           : "Hello! Nice to meet you. How are you today?";
     setMessages([{ role: "assistant", text: opening }]);
     setLessonReview(null);
+    setSecondsLeft(lessonMinutes * 60);
+    setTranslations({});
+    setSuggestions([]);
+    setFailedMessage("");
     setNotice("");
     setStarted(true);
   }
@@ -126,13 +151,64 @@ export default function Home() {
         clientId: getClientId(),
       });
       setMessages([...next, { role: "assistant", text: result.text }]);
+      setSuggestions(Array.isArray(result.suggestions) ? result.suggestions.slice(0, 3) : []);
+      setFailedMessage("");
       void speakNatural(result.text, audioSpeed);
     } catch (error) {
       setNotice(errorText(error));
+      setFailedMessage(text);
     } finally {
       setBusy(false);
     }
   }
+
+  async function retryMessage() {
+    if (!failedMessage || busy) return;
+    setBusy(true); setNotice("もう一度送信しています…");
+    try {
+      const history = messages.slice(0, -1);
+      const result = await callApi("chat", { message: failedMessage, history, settings, clientId: getClientId() });
+      setMessages([...messages, { role: "assistant", text: result.text }]);
+      setSuggestions(Array.isArray(result.suggestions) ? result.suggestions.slice(0, 3) : []);
+      setFailedMessage(""); setNotice(""); void speakNatural(result.text, audioSpeed);
+    } catch (error) { setNotice(errorText(error)); } finally { setBusy(false); }
+  }
+
+  async function showTranslation(text: string, index: number) {
+    if (translations[index] || busy) { if (translations[index]) setTranslations({ ...translations, [index]: "" }); return; }
+    setBusy(true);
+    try { const result = await callApi("translate", { text, clientId: getClientId() }); setTranslations({ ...translations, [index]: result.text }); }
+    catch (error) { setNotice(errorText(error)); } finally { setBusy(false); }
+  }
+
+  function startPronunciation(target: string) { setPronunciation({ target }); void speakNatural(target, "slow"); }
+  function recordPronunciation() {
+    if (!pronunciation) return;
+    const Recognition = (window as Window & { webkitSpeechRecognition?: new () => any }).webkitSpeechRecognition;
+    if (!Recognition) { setNotice("発音評価はChromeまたはEdgeで利用してください。"); return; }
+    const recognition = new Recognition(); recognition.lang = "en-US"; recognition.interimResults = false;
+    recognition.onstart = () => setListening(true); recognition.onend = () => setListening(false);
+    recognition.onerror = () => { setListening(false); setNotice("聞き取れませんでした。静かな場所でもう一度試してください。"); };
+    recognition.onresult = (event: any) => { const heard = event.results[0][0].transcript; setPronunciation({ ...pronunciation, heard, score: pronunciationScore(pronunciation.target, heard) }); };
+    recognition.start();
+  }
+
+  async function makeShareQr() {
+    const link = sharedSettingsUrl(settings);
+    setShareQr(await QRCode.toDataURL(link, { width: 280, margin: 2, color: { dark: "#31207d", light: "#ffffff" } }));
+  }
+
+  function exportHistory() {
+    const blob = new Blob([JSON.stringify({ app: "SpeakUp", version: 1, sessions }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob), anchor = document.createElement("a"); anchor.href = url; anchor.download = `speakup-history-${new Date().toISOString().slice(0, 10)}.json`; anchor.click(); URL.revokeObjectURL(url);
+  }
+  async function importHistory(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]; if (!file) return;
+    try { const data = JSON.parse(await file.text()), incoming = Array.isArray(data) ? data : data.sessions; if (!Array.isArray(incoming)) throw new Error(); const valid = incoming.filter(validSession).slice(0, 30); if (!valid.length) throw new Error(); setSessions(valid); localStorage.setItem(STORAGE_KEY, JSON.stringify(valid)); setNotice(`${valid.length}件の履歴を読み込みました。`); }
+    catch { setNotice("このファイルはSpeakUp!の履歴ファイルではありません。"); }
+    event.target.value = "";
+  }
+  function deleteHistory() { if (!confirm("保存した英会話履歴をすべて削除しますか？この操作は元に戻せません。")) return; setSessions([]); localStorage.removeItem(STORAGE_KEY); setNotice("履歴を削除しました。"); }
 
   async function finishLesson() {
     if (!turns || busy) return;
@@ -283,7 +359,12 @@ export default function Home() {
                 />
               </label>
             )}
+            <ChoiceGroup title="会話時間" values={["0", "5", "10", "15"]} labels={["時間制限なし", "5分", "10分", "15分"]} selected={String(lessonMinutes)} onSelect={(value) => setLessonMinutes(Number(value))} />
           </div>
+
+          <div className="setupTools"><button onClick={() => void makeShareQr()}>▦ この設定のQRを作る</button></div>
+          {shareQr && <div className="sharePanel"><button className="closeMini" onClick={() => setShareQr("")}>×</button><b>このQRを読み取ると同じ設定になります</b><img src={shareQr} alt="レッスン設定共有QRコード" /><small>氏名や会話履歴は含まれません。</small></div>}
+          <div className="privacyNote"><b>🔒 利用前のお願い</b><span>氏名・住所・連絡先などの個人情報は入力しないでください。会話履歴はこのブラウザ内だけに保存されます。</span></div>
 
           {notice && <div className="notice setupNotice">{notice}</div>}
           <button className="startButton" onClick={startLesson}>
@@ -300,7 +381,7 @@ export default function Home() {
               <em>{modeName(settings.mode)} · {levelName(settings)}</em>
               <h1>{lessonTitle(settings)}</h1>
             </div>
-            <span>{turns} turns</span>
+            <span>{lessonMinutes ? formatTime(secondsLeft) : `${turns} turns`}</span>
           </div>
           <div className="voiceSettings">
             <span>🔊 ネイティブ音声</span>
@@ -313,15 +394,17 @@ export default function Home() {
             {messages.map((message, index) => (
               <div className={`row ${message.role}`} key={index}>
                 <i>{message.role === "assistant" ? "AI" : "YOU"}</i>
-                <p>
-                  {message.text}
-                  {message.role === "assistant" && <button onClick={() => void speakNatural(message.text, audioSpeed)} aria-label="ネイティブ音声で読み上げる">🔊</button>}
-                </p>
+                <div className="bubbleWrap"><p>{message.text}</p>
+                  {message.role === "assistant" && <div className="messageActions"><button onClick={() => void speakNatural(message.text, audioSpeed)}>🔊 聞く</button><button onClick={() => void showTranslation(message.text, index)}>🇯🇵 訳</button><button onClick={() => startPronunciation(message.text)}>🎤 発音</button></div>}
+                  {translations[index] && <div className="translation">{translations[index]}</div>}
+                </div>
               </div>
             ))}
             {busy && <div className="row assistant"><i>AI</i><p>Thinking •••</p></div>}
           </div>
-          {notice && <div className="notice">{notice}</div>}
+          {pronunciation && <div className="practicePanel"><button className="closeMini" onClick={() => setPronunciation(null)}>×</button><b>発音練習</b><p>{pronunciation.target}</p><button className="practiceButton" onClick={recordPronunciation}>{listening ? "聞き取り中…" : "🎙️ この英文を言う"}</button>{pronunciation.heard && <div className="pronunciationResult"><strong>{pronunciation.score}点</strong><span>聞こえた英語：{pronunciation.heard}</span><small>音声認識との一致度による簡易評価です。</small></div>}</div>}
+          {!!suggestions.length && <div className="suggestions"><b>返答例</b>{suggestions.map((suggestion) => <button key={suggestion} onClick={() => setInput(suggestion)}>{suggestion}</button>)}</div>}
+          {notice && <div className="notice">{notice}{failedMessage && <button className="retryButton" onClick={retryMessage}>もう一度送る</button>}</div>}
           <form onSubmit={sendMessage}>
             <button type="button" className={`mic ${listening ? "recording" : ""}`} onClick={startListening} aria-label="音声入力">🎙️</button>
             <input maxLength={500} value={input} onChange={(event) => setInput(event.target.value)} placeholder="英語で話す・入力する…" />
@@ -391,14 +474,17 @@ export default function Home() {
           ))}
           {!!questions.length && !graded && <button className="primary" disabled={Object.keys(answers).length !== questions.length} onClick={() => setGraded(true)}>採点する</button>}
           {graded && <div className="result"><b>{score} / {questions.length}</b><span>{score >= 8 ? "すばらしい！" : score >= 6 ? "あと少し！" : "履歴を見て復習しよう！"}</span></div>}
+          {graded && score < questions.length && <button className="primary" onClick={() => { const wrong = questions.filter((question, index) => answers[index] !== question.answer); setQuestions(wrong); setAnswers({}); setGraded(false); }}>間違えた{questions.length - score}問に再挑戦</button>}
         </section>
       )}
 
       {tab === "history" && (
         <section className="card single">
           <em>MY PROGRESS</em><h1>英会話の履歴</h1>
+          <div className="historyTools"><input value={historyQuery} onChange={(event) => setHistoryQuery(event.target.value)} placeholder="日付・単元・会話内容を検索" /><button onClick={exportHistory} disabled={!sessions.length}>書き出す</button><button onClick={() => importRef.current?.click()}>読み込む</button><button className="dangerButton" onClick={deleteHistory} disabled={!sessions.length}>すべて削除</button><input ref={importRef} type="file" accept="application/json,.json" hidden onChange={importHistory} /></div>
+          {notice && <div className="notice historyNotice">{notice}</div>}
           {!sessions.length && <div className="empty">保存されたレッスンはまだありません。</div>}
-          {sessions.map((session) => (
+          {sessions.filter((session) => sessionSearchText(session).includes(historyQuery.toLowerCase())).map((session) => (
             <details key={session.id}>
               <summary>
                 <div>
@@ -487,3 +573,20 @@ function unitsFor(level: string) {
   if (level === "中学3年生") return ["現在完了", "現在完了進行形", "不定詞の応用", "分詞", "関係代名詞", "間接疑問文", "仮定法"];
   return ["時制", "助動詞", "受動態", "不定詞・動名詞", "分詞構文", "関係詞", "比較", "仮定法"];
 }
+function formatTime(seconds: number) { const minutes = Math.floor(seconds / 60), rest = seconds % 60; return `${minutes}:${String(rest).padStart(2, "0")}`; }
+function pronunciationScore(target: string, heard: string) {
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z' ]/g, "").replace(/\s+/g, " ").trim();
+  const a = normalize(target), b = normalize(heard), rows = Array.from({ length: a.length + 1 }, (_, index) => index);
+  for (let j = 1; j <= b.length; j++) { let previous = rows[0]; rows[0] = j; for (let i = 1; i <= a.length; i++) { const saved = rows[i]; rows[i] = Math.min(rows[i] + 1, rows[i - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1)); previous = saved; } }
+  return Math.max(0, Math.round((1 - rows[a.length] / Math.max(a.length, b.length, 1)) * 100));
+}
+function sharedSettingsUrl(settings: Settings) {
+  const url = new URL(window.location.origin + window.location.pathname); const params = new URLSearchParams({ shared: "1", grade: settings.level, type: settings.proficiencyType, cefr: settings.cefr, eiken: settings.targetLevel, mode: settings.mode, unit: settings.unit, topic: settings.topic }); url.search = params.toString(); return url.toString();
+}
+function readSharedSettings(): Settings | null {
+  const params = new URLSearchParams(window.location.search); if (params.get("shared") !== "1") return null;
+  const level = params.get("grade") || initialSettings.level, mode = (["grammar", "free", "custom"].includes(params.get("mode") || "") ? params.get("mode") : "grammar") as Mode, cefr = (["A0", "A1", "A2", "B1"].includes(params.get("cefr") || "") ? params.get("cefr") : "A1") as Settings["cefr"];
+  return { level, targetLevel: params.get("eiken") || initialSettings.targetLevel, cefr, proficiencyType: params.get("type") === "eiken" ? "eiken" : "cefr", mode, unit: params.get("unit") || unitsFor(level)[0], topic: params.get("topic") || "" };
+}
+function validSession(value: any): value is Session { return value && typeof value.id === "string" && typeof value.date === "string" && value.settings && Array.isArray(value.messages) && value.review && typeof value.review.score === "number"; }
+function sessionSearchText(session: Session) { return `${new Date(session.date).toLocaleDateString("ja-JP")} ${lessonTitle(session.settings)} ${levelName(session.settings)} ${session.messages.map((message) => message.text).join(" ")}`.toLowerCase(); }

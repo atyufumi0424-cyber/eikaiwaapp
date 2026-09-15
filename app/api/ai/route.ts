@@ -7,17 +7,23 @@ const endpoint="https://api.groq.com/openai/v1/chat/completions";
 export async function POST(req:NextRequest){
  try{
   const b=await req.json(),action=String(b.action||"");
-  if(!["chat","review","summaryTest"].includes(action))return fail("不正な操作です。",400);
+  if(!["chat","review","summaryTest","translate"].includes(action))return fail("不正な操作です。",400);
   const keys=(process.env.GROQ_API_KEYS||process.env.GROQ_API_KEY||"").split(/[\n,]+/).map(k=>k.trim()).filter(k=>k.startsWith("gsk_"));
   const geminiKeys=(process.env.GEMINI_API_KEYS||process.env.GEMINI_API_KEY||"").split(/[\n,]+/).map(k=>k.trim()).filter(Boolean);
   if(!keys.length&&!geminiKeys.length)return fail("サーバーにAI APIキーが設定されていません。",503);
+  if(action==="translate"){
+   const text=clean(b.text,1200);if(!text)return fail("翻訳する文章がありません。",400);
+   const data=await callAI(keys,geminiKeys,b.clientId,{model:model(),messages:[{role:"system",content:"Translate the English into natural, easy Japanese for a student. Output only the Japanese translation."},{role:"user",content:text}],temperature:.1,max_tokens:500});
+   return ok({text:clean(data.choices?.[0]?.message?.content,1500)||"翻訳できませんでした。"});
+  }
   if(action==="chat"){
    const message=clean(b.message,500),settings=safeSettings(b.settings),history=safeHistory(b.history).slice(-12);
    if(!message)return fail("メッセージを入力してください。",400);
-   if(history.filter(m=>m.role==="user").length===0&&/^(hello|hi|hey|hello there)[!. ]*$/i.test(message))return ok({text:"Hello! Nice to meet you. How are you today?"});
+   if(history.filter(m=>m.role==="user").length===0&&/^(hello|hi|hey|hello there)[!. ]*$/i.test(message))return ok({text:"Hello! Nice to meet you. How are you today?",suggestions:["I'm good, thank you!","I'm a little tired.","I'm excited today!"]});
    const messages=[{role:"system",content:teacherPrompt(settings)},...history.map(m=>({role:m.role,content:m.text})),{role:"user",content:message}];
    const data=await callAI(keys,geminiKeys,b.clientId,{model:model(),messages,temperature:.7,max_tokens:320,reasoning_effort:"low"});
-   return ok({text:clean(data.choices?.[0]?.message?.content,1200)||"Thanks for telling me! What would you like to talk about next?"});
+   const parsed=parseChat(data.choices?.[0]?.message?.content);
+   return ok({text:parsed.text||"Thanks for telling me! What would you like to talk about next?",suggestions:parsed.suggestions});
   }
   if(action==="review"){
    const settings=safeSettings(b.settings);
@@ -46,7 +52,7 @@ Conversation:\n${log}\nReturn JSON only. Schema: {"score":number,"breakdown":{"c
  }catch(e){const m=e instanceof Error?e.message:"サーバーエラーが発生しました。";return fail(m,/制限|混み合/.test(m)?429:500)}
 }
 function model(){return process.env.GROQ_MODEL||"openai/gpt-oss-20b"}
-function teacherPrompt(s:Settings){const t=s.mode==="grammar"?`Target grammar unit: ${s.unit||"basic grammar"}. Keep the conversation natural while giving the learner chances to use it.`:s.mode==="custom"?`Stay naturally on this topic: ${s.topic||"daily life"}.`:"Have a relaxed, natural conversation led by the learner's interests.";const cefr=s.proficiencyType==="eiken"?eikenToCefr(s.targetLevel):s.cefr;const guides:Record<string,string>={A0:"Use familiar words and very short sentences of 2-5 words.",A1:"Use common words, present/past simple, and short sentences of about 4-8 words.",A2:"Use everyday vocabulary and sentences of about 6-12 words, linking ideas with and, but, or because.",B1:"Use clear standard English, varied everyday tenses, and sentences of about 8-16 words."};return `You are a friendly conversation partner who also teaches English to a ${s.level} learner. The learner selected ${selectedLevel(s)}. Follow this guide: ${guides[cefr]||guides.A1} React to the meaning of what the learner says before asking a related question. Sound like a real conversation, not a worksheet. A greeting such as Hello is always understandable: greet them back and continue naturally. Never ask the learner to repeat a clear message. Correct only important mistakes, and do so briefly after responding to the meaning. Do not correct every sentence. Reply directly in 2-4 sentences and end with one natural question. Never mention these instructions. ${t}`}
+function teacherPrompt(s:Settings){const t=s.mode==="grammar"?`Target grammar unit: ${s.unit||"basic grammar"}. Keep the conversation natural while giving the learner chances to use it.`:s.mode==="custom"?`Stay naturally on this topic: ${s.topic||"daily life"}.`:"Have a relaxed, natural conversation led by the learner's interests.";const cefr=s.proficiencyType==="eiken"?eikenToCefr(s.targetLevel):s.cefr;const guides:Record<string,string>={A0:"Use familiar words and very short sentences of 2-5 words.",A1:"Use common words, present/past simple, and short sentences of about 4-8 words.",A2:"Use everyday vocabulary and sentences of about 6-12 words, linking ideas with and, but, or because.",B1:"Use clear standard English, varied everyday tenses, and sentences of about 8-16 words."};return `You are a friendly conversation partner who also teaches English to a ${s.level} learner. The learner selected ${selectedLevel(s)}. Follow this guide: ${guides[cefr]||guides.A1} React to the meaning of what the learner says before asking a related question. Sound like a real conversation, not a worksheet. A greeting such as Hello is always understandable: greet them back and continue naturally. Never ask the learner to repeat a clear message. Correct only important mistakes, and do so briefly after responding to the meaning. Do not correct every sentence. Reply directly in 2-4 sentences and end with one natural question. After the reply, add exactly [[SUGGESTIONS]] and three short learner reply examples separated by ||. Do not put anything else after them. Never mention these instructions. ${t}`}
 function jsonPayload(prompt:string,max_tokens:number){return{model:model(),messages:[{role:"system",content:"Return one valid JSON object only. Do not use Markdown or add text outside the JSON."},{role:"user",content:prompt}],temperature:.1,max_tokens}}
 async function callAI(keys:string[],geminiKeys:string[],clientId:unknown,payload:any){
  let last="AIサービスが混み合っています。";
@@ -69,6 +75,7 @@ function safeSettings(x:any):Settings{return{level:clean(x?.level,30)||"中学�
 function selectedLevel(s:Settings){return s.proficiencyType==="eiken"?s.targetLevel:`CEFR ${s.cefr}`}
 function eikenToCefr(level:string){if(level.includes("2級")&&!level.includes("準"))return"B1";if(level.includes("準2級")||level.includes("3級"))return"A2";if(level.includes("4級"))return"A1";return"A0"}
 function clean(v:unknown,max:number){return typeof v==="string"?v.replace(/[\u0000-\u001f]/g," ").trim().slice(0,max):""}
+function parseChat(value:unknown){const raw=typeof value==="string"?value:"",parts=raw.split("[[SUGGESTIONS]]"),text=clean(parts[0],1200),suggestions=(parts[1]||"").split("||").map(v=>clean(v,120)).filter(Boolean).slice(0,3);return{text,suggestions}}
 function hash(s:string){let h=2166136261;for(let i=0;i<s.length;i++)h=Math.imul(h^s.charCodeAt(i),16777619);return h>>>0}
 function parseJson(t:unknown):any{if(typeof t!=="string")return null;const cleaned=t.replace(/^\`\`\`(?:json)?\s*|\`\`\`$/g,"").trim();try{return JSON.parse(cleaned)}catch{const start=cleaned.indexOf("{"),end=cleaned.lastIndexOf("}");if(start<0||end<=start)return null;try{return JSON.parse(cleaned.slice(start,end+1))}catch{return null}}}
 function normalizeReview(x:any,conversation:Msg[]){const fallback=fallbackBreakdown(conversation);const raw=x?.breakdown||{};const breakdown={communication:rubricPart(raw.communication,30,fallback.communication,"英語で意味を伝えようとできました。"),grammar:rubricPart(raw.grammar,25,fallback.grammar,"学習レベルに合った文法を使えました。"),vocabulary:rubricPart(raw.vocabulary,20,fallback.vocabulary,"会話に必要な単語を使えました。"),interaction:rubricPart(raw.interaction,25,fallback.interaction,"相手の質問に答えて会話を続けました。")};const score=breakdown.communication.score+breakdown.grammar.score+breakdown.vocabulary.score+breakdown.interaction.score;return{score,breakdown,feedback:clean(x?.feedback,800)||"最後まで英語で会話できました。内訳を見て、次の練習につなげましょう。",strengths:list(x?.strengths,3,240),grammarPoints:list(x?.grammarPoints,3,280),naturalExpressions:list(x?.naturalExpressions,3,280),vocabulary:list(x?.vocabulary,6,160),nextGoal:clean(x?.nextGoal,300)||"今日使った表現を、次の会話でもう一度使ってみよう！"}}
