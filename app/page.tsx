@@ -291,6 +291,7 @@ export default function Home() {
           <button className={tab === "lesson" ? "on" : ""} onClick={() => setTab("lesson")}>レッスン</button>
           <button className={tab === "test" ? "on" : ""} onClick={() => setTab("test")}>まとめテスト</button>
           <button className={tab === "history" ? "on" : ""} onClick={() => setTab("history")}>履歴</button>
+          <button onClick={() => { window.location.href = "/group"; }}>みんなでクイズ</button>
         </nav>
       </header>
 
