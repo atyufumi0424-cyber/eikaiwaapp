@@ -200,18 +200,34 @@ export default function GroupQuiz() {
     const ready = manualQuestions.filter(
       (q) =>
         q.question.trim() &&
-        q.options.every((o) => o.trim()) &&
+        (q.type === "speaking"
+          ? q.options[0].trim()
+          : q.options.every((o) => o.trim())) &&
         Number.isInteger(q.answer),
     );
+    const manualSpeakingCount = manualQuestions.filter(
+      (q) => q.type === "speaking",
+    ).length;
+    if (manualSpeakingCount > 3) {
+      setNotice("発音問題は1回のクイズにつき3問までです。");
+      return;
+    }
     if (ready.length < 3) {
-      setNotice("問題文・4つの選択肢・正解を、3問以上入力してください。");
+      setNotice(
+        "未入力の項目があります。完成した問題を3問以上入力してください。",
+      );
       return;
     }
     setQuestions(
       ready.map((q) => ({
         ...q,
         question: q.question.trim(),
-        options: q.options.map((o) => o.trim()),
+        type: q.type === "speaking" ? "speaking" : "grammar",
+        options:
+          q.type === "speaking"
+            ? [q.options[0].trim(), "", "", ""]
+            : q.options.map((o) => o.trim()),
+        answer: q.type === "speaking" ? 0 : q.answer,
         explanation: q.explanation?.trim() || "先生が作った問題です。",
       })),
     );
@@ -423,39 +439,82 @@ export default function GroupQuiz() {
                       </button>
                     )}
                   </header>
+                  <div className="manualTypeSwitch">
+                    <button
+                      type="button"
+                      className={q.type !== "speaking" ? "on" : ""}
+                      onClick={() => updateManual(i, { type: "grammar" })}
+                    >
+                      4択問題
+                    </button>
+                    <button
+                      type="button"
+                      className={q.type === "speaking" ? "on" : ""}
+                      disabled={
+                        q.type !== "speaking" &&
+                        manualQuestions.filter(
+                          (item) => item.type === "speaking",
+                        ).length >= 3
+                      }
+                      onClick={() =>
+                        updateManual(i, { type: "speaking", answer: 0 })
+                      }
+                    >
+                      🎤 発音問題
+                    </button>
+                  </div>
                   <label>
-                    問題文
+                    {q.type === "speaking" ? "指示文" : "問題文"}
                     <input
                       maxLength={500}
                       value={q.question}
                       onChange={(e) =>
                         updateManual(i, { question: e.target.value })
                       }
-                      placeholder="例：I (  ) tennis yesterday."
+                      placeholder={
+                        q.type === "speaking"
+                          ? "例：昨日したことを英語で言おう"
+                          : "例：I (  ) tennis yesterday."
+                      }
                     />
                   </label>
-                  <div className="manualOptions">
-                    {q.options.map((o, j) => (
-                      <label
-                        className={q.answer === j ? "isAnswer" : ""}
-                        key={j}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => updateManual(i, { answer: j })}
-                          aria-label={`${String.fromCharCode(65 + j)}を正解にする`}
+                  {q.type === "speaking" ? (
+                    <label className="speakingPhraseInput">
+                      正解として認識する英文
+                      <input
+                        maxLength={180}
+                        value={q.options[0]}
+                        onChange={(e) => updateOption(i, 0, e.target.value)}
+                        placeholder="例：I played tennis yesterday."
+                      />
+                      <small>
+                        生徒はこの英文をマイクに向かって発音します。
+                      </small>
+                    </label>
+                  ) : (
+                    <div className="manualOptions">
+                      {q.options.map((o, j) => (
+                        <label
+                          className={q.answer === j ? "isAnswer" : ""}
+                          key={j}
                         >
-                          {q.answer === j ? "✓" : String.fromCharCode(65 + j)}
-                        </button>
-                        <input
-                          maxLength={180}
-                          value={o}
-                          onChange={(e) => updateOption(i, j, e.target.value)}
-                          placeholder={`選択肢 ${String.fromCharCode(65 + j)}`}
-                        />
-                      </label>
-                    ))}
-                  </div>
+                          <button
+                            type="button"
+                            onClick={() => updateManual(i, { answer: j })}
+                            aria-label={`${String.fromCharCode(65 + j)}を正解にする`}
+                          >
+                            {q.answer === j ? "✓" : String.fromCharCode(65 + j)}
+                          </button>
+                          <input
+                            maxLength={180}
+                            value={o}
+                            onChange={(e) => updateOption(i, j, e.target.value)}
+                            placeholder={`選択肢 ${String.fromCharCode(65 + j)}`}
+                          />
+                        </label>
+                      ))}
+                    </div>
+                  )}
                   <label>
                     解説（任意）
                     <textarea
@@ -567,16 +626,24 @@ export default function GroupQuiz() {
                 <details key={i}>
                   <summary>
                     <i>{String(i + 1).padStart(2, "0")}</i>
-                    {q.type === "speaking" && <b className="speakBadge">発音</b>}
+                    {q.type === "speaking" && (
+                      <b className="speakBadge">発音</b>
+                    )}
                     {q.question}
                   </summary>
                   <ol className={q.type === "speaking" ? "speakPreview" : ""}>
-                    {q.options.map((o, j) => o && (
-                      <li className={j === q.answer ? "correct" : ""} key={j}>
-                        <b>{String.fromCharCode(65 + j)}</b>
-                        {o}
-                      </li>
-                    ))}
+                    {q.options.map(
+                      (o, j) =>
+                        o && (
+                          <li
+                            className={j === q.answer ? "correct" : ""}
+                            key={j}
+                          >
+                            <b>{String.fromCharCode(65 + j)}</b>
+                            {o}
+                          </li>
+                        ),
+                    )}
                   </ol>
                   <small>{q.explanation}</small>
                 </details>
@@ -683,17 +750,25 @@ export default function GroupQuiz() {
             <h1>{q.question}</h1>
             {isHost ? (
               <div className="hostAnswers">
-                {q.type === "speaking" ? <div className="speakingCard hostSpeaking"><span>🎙️ 発音チャレンジ</span><strong>{q.options[0]}</strong><small>生徒はマイクでこの英文に答えます</small></div> : <div className="answerGrid">
-                  {q.options.map((o, i) => (
-                    <div
-                      className={`answer ${colors[i]} ${state.room.status === "reveal" && q.answer === i ? "winner" : ""}`}
-                      key={i}
-                    >
-                      <i>{String.fromCharCode(65 + i)}</i>
-                      <b>{o}</b>
-                    </div>
-                  ))}
-                </div>}
+                {q.type === "speaking" ? (
+                  <div className="speakingCard hostSpeaking">
+                    <span>🎙️ 発音チャレンジ</span>
+                    <strong>{q.options[0]}</strong>
+                    <small>生徒はマイクでこの英文に答えます</small>
+                  </div>
+                ) : (
+                  <div className="answerGrid">
+                    {q.options.map((o, i) => (
+                      <div
+                        className={`answer ${colors[i]} ${state.room.status === "reveal" && q.answer === i ? "winner" : ""}`}
+                        key={i}
+                      >
+                        <i>{String.fromCharCode(65 + i)}</i>
+                        <b>{o}</b>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <button
                   className="bigAction"
                   disabled={loading}
@@ -708,8 +783,50 @@ export default function GroupQuiz() {
                     : "次のラウンドへ →"}
                 </button>
               </div>
+            ) : q.type === "speaking" ? (
+              <div className="speakingCard playerSpeaking">
+                <span>🎙️ SPEAKING CHALLENGE</span>
+                <strong>{q.options[0]}</strong>
+                <small>
+                  {listening
+                    ? "聞いています…"
+                    : "マイクを押して、英文を声に出そう"}
+                </small>
+                <button
+                  className={`micButton ${listening ? "listening" : ""}`}
+                  disabled={
+                    selected !== null ||
+                    state.room.status === "reveal" ||
+                    listening
+                  }
+                  onClick={speakAnswer}
+                  aria-label="英語を話して答える"
+                >
+                  {listening ? "●" : "🎤"}
+                </button>
+                {transcript && (
+                  <p className="spokenText">
+                    聞き取った英語：<b>{transcript}</b>
+                  </p>
+                )}
+                {answered && state.room.status === "question" && (
+                  <p className="answered">
+                    発音を送信しました。答え合わせを待ってね！
+                  </p>
+                )}
+                {state.room.status === "reveal" && (
+                  <p className="explanation">
+                    <b>
+                      {selected === 0
+                        ? "発音できました！ NICE!"
+                        : "もう一度ゆっくり言ってみよう"}
+                    </b>
+                    <span>{q.explanation}</span>
+                  </p>
+                )}
+              </div>
             ) : (
-              q.type === "speaking" ? <div className="speakingCard playerSpeaking"><span>🎙️ SPEAKING CHALLENGE</span><strong>{q.options[0]}</strong><small>{listening?"聞いています…":"マイクを押して、英文を声に出そう"}</small><button className={`micButton ${listening?"listening":""}`} disabled={selected!==null||state.room.status==="reveal"||listening} onClick={speakAnswer} aria-label="英語を話して答える">{listening?"●":"🎤"}</button>{transcript&&<p className="spokenText">聞き取った英語：<b>{transcript}</b></p>}{answered&&state.room.status==="question"&&<p className="answered">発音を送信しました。答え合わせを待ってね！</p>}{state.room.status==="reveal"&&<p className="explanation"><b>{selected===0?"発音できました！ NICE!":"もう一度ゆっくり言ってみよう"}</b><span>{q.explanation}</span></p>}</div> : <div className="answerGrid playerGrid">
+              <div className="answerGrid playerGrid">
                 {q.options.map((o, i) => (
                   <button
                     disabled={
@@ -747,7 +864,11 @@ export default function GroupQuiz() {
           <span>FINAL RANKING</span>
           <h1>最終結果</h1>
           <div className="podium">
-            <div className="rankingHead"><strong>順位</strong><b>名前</b><span>得点</span></div>
+            <div className="rankingHead">
+              <strong>順位</strong>
+              <b>名前</b>
+              <span>得点</span>
+            </div>
             {state.players.slice(0, 10).map((p, i) => (
               <div className={p.id === playerId ? "me" : ""} key={p.id}>
                 <strong>{i + 1}</strong>
@@ -778,6 +899,7 @@ function message(e: unknown) {
 }
 function emptyQuestion(): Question {
   return {
+    type: "grammar",
     question: "",
     options: ["", "", "", ""],
     answer: 0,
@@ -785,10 +907,21 @@ function emptyQuestion(): Question {
   };
 }
 function speechMatches(heard: string, expected: string) {
-  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim();
-  const actual = normalize(heard), target = normalize(expected);
+  const normalize = (value: string) =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9' ]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  const actual = normalize(heard),
+    target = normalize(expected);
   if (!actual || !target) return false;
   if (actual === target) return true;
-  const actualWords = actual.split(" "), targetWords = target.split(" ");
-  return targetWords.filter((word) => actualWords.includes(word)).length / targetWords.length >= 0.75;
+  const actualWords = actual.split(" "),
+    targetWords = target.split(" ");
+  return (
+    targetWords.filter((word) => actualWords.includes(word)).length /
+      targetWords.length >=
+    0.75
+  );
 }
