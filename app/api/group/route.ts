@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 export const runtime = "nodejs";
-type Question={question:string;options:string[];answer:number;explanation?:string};
+type Question={type?:"grammar"|"speaking";question:string;options:string[];answer:number;explanation?:string};
 const headers=()=>({apikey:process.env.SUPABASE_SERVICE_ROLE_KEY||"",Authorization:`Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY||""}`,"Content-Type":"application/json",Prefer:"return=representation"});
 
 export async function POST(req:NextRequest){
@@ -44,7 +44,7 @@ async function roomState(b:any){
  const room=rooms[0],isHost=String(b.hostToken||"")===room.host_token,qs=safeQuestions(room.questions),index=Number(room.current_question),q=qs[index];
  const players=await db(`quiz_players?room_id=eq.${roomId}&select=id,name,score,streak&order=score.desc,joined_at.asc`);
  const answers=index>=0?await db(`quiz_answers?room_id=eq.${roomId}&question_index=eq.${index}&select=player_id,option_index,correct,points`):[];
- const publicQuestion=q?{question:q.question,options:q.options,...((room.status==="reveal"||room.status==="finished"||isHost)?{answer:q.answer,explanation:q.explanation||""}:{})}:null;
+ const publicQuestion=q?{type:q.type||"grammar",question:q.question,options:q.options,...((room.status==="reveal"||room.status==="finished"||isHost)?{answer:q.answer,explanation:q.explanation||""}:{})}:null;
  return ok({room:{id:room.id,code:room.code,title:room.title,status:room.status,currentQuestion:index,totalQuestions:qs.length,question:publicQuestion,questionStartedAt:room.question_started_at},players,answeredPlayerIds:answers.map((a:any)=>a.player_id),answerCount:answers.length,...(isHost?{questions:qs}:{})});
 }
 async function hostAction(b:any){
@@ -68,7 +68,7 @@ async function submitAnswer(b:any){
  await db(`quiz_players?id=eq.${playerId}`,{method:"PATCH",body:JSON.stringify({score:Number(players[0].score)+points+bonus,streak})});
  return ok({correct,points:points+bonus});
 }
-function safeQuestions(v:any):Question[]{return Array.isArray(v)?v.slice(0,20).filter(q=>q&&typeof q.question==="string"&&Array.isArray(q.options)&&q.options.length===4&&Number.isInteger(q.answer)&&q.answer>=0&&q.answer<4).map(q=>({question:clean(q.question,300),options:q.options.map((x:any)=>clean(x,120)),answer:q.answer,explanation:clean(q.explanation,300)})):[]}
+function safeQuestions(v:any):Question[]{return Array.isArray(v)?v.slice(0,20).filter(q=>q&&typeof q.question==="string"&&Array.isArray(q.options)&&q.options.length===4&&Number.isInteger(q.answer)&&q.answer>=0&&q.answer<4).map(q=>({type:q.type==="speaking"?"speaking":"grammar",question:clean(q.question,300),options:q.options.map((x:any)=>clean(x,120)),answer:q.type==="speaking"?0:q.answer,explanation:clean(q.explanation,300)})):[]}
 function clean(v:any,max:number){return typeof v==="string"?v.replace(/[\u0000-\u001f]/g," ").trim().slice(0,max):""}
 function id(v:any){const s=String(v||"");return /^[0-9a-f-]{36}$/i.test(s)?s:""}
 function ok(data:any){return NextResponse.json(data,{headers:{"Cache-Control":"no-store"}})}
