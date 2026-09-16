@@ -1,50 +1,794 @@
 "use client";
-import {FormEvent,useEffect,useState} from "react";
+import { FormEvent, useEffect, useState } from "react";
 import "./group.css";
-type Question={question:string;options:string[];answer?:number;explanation?:string};
-type Player={id:string;name:string;score:number;streak:number};
-type State={room:{id:string;code:string;title:string;status:"lobby"|"question"|"reveal"|"finished";currentQuestion:number;totalQuestions:number;question:Question|null};players:Player[];answeredPlayerIds:string[];answerCount:number;questions?:Question[]};
-const grades=["中学1年生","中学2年生","中学3年生","高校生"];
-const units:Record<string,string[]>={"中学1年生":["be動詞","一般動詞","疑問文・否定文","can","現在進行形","過去形"],"中学2年生":["過去形・過去進行形","未来表現","助動詞","不定詞","動名詞","比較級・最上級","接続詞","受け身"],"中学3年生":["現在完了","不定詞の応用","分詞","関係代名詞","間接疑問文","仮定法"],"高校生":["時制","助動詞","受動態","不定詞・動名詞","関係詞","比較","仮定法"]};
-const colors=["red","blue","yellow","green"];
+type Question = {
+  type?: "grammar" | "speaking";
+  question: string;
+  options: string[];
+  answer?: number;
+  explanation?: string;
+};
+type Player = { id: string; name: string; score: number; streak: number };
+type State = {
+  room: {
+    id: string;
+    code: string;
+    title: string;
+    status: "lobby" | "question" | "reveal" | "finished";
+    currentQuestion: number;
+    totalQuestions: number;
+    question: Question | null;
+  };
+  players: Player[];
+  answeredPlayerIds: string[];
+  answerCount: number;
+  questions?: Question[];
+};
+const grades = ["中学1年生", "中学2年生", "中学3年生", "高校生"];
+const units: Record<string, string[]> = {
+  中学1年生: [
+    "be動詞",
+    "一般動詞",
+    "疑問文・否定文",
+    "can",
+    "現在進行形",
+    "過去形",
+  ],
+  中学2年生: [
+    "過去形・過去進行形",
+    "未来表現",
+    "助動詞",
+    "不定詞",
+    "動名詞",
+    "比較級・最上級",
+    "接続詞",
+    "受け身",
+  ],
+  中学3年生: [
+    "現在完了",
+    "不定詞の応用",
+    "分詞",
+    "関係代名詞",
+    "間接疑問文",
+    "仮定法",
+  ],
+  高校生: [
+    "時制",
+    "助動詞",
+    "受動態",
+    "不定詞・動名詞",
+    "関係詞",
+    "比較",
+    "仮定法",
+  ],
+};
+const colors = ["red", "blue", "yellow", "green"];
 
-export default function GroupQuiz(){
- const [role,setRole]=useState<""|"host"|"player">("");
- const [grade,setGrade]=useState("中学2年生"),[unit,setUnit]=useState("過去形・過去進行形"),[level,setLevel]=useState("A1");
- const [makeMode,setMakeMode]=useState<"auto"|"myQuestions"|"manual">("auto"),[questionNotes,setQuestionNotes]=useState("");
- const [manualQuestions,setManualQuestions]=useState<Question[]>([emptyQuestion()]);
- const [questions,setQuestions]=useState<Question[]>([]),[loading,setLoading]=useState(false),[notice,setNotice]=useState("");
- const [roomId,setRoomId]=useState(""),[hostToken,setHostToken]=useState(""),[playerId,setPlayerId]=useState(""),[state,setState]=useState<State|null>(null);
- const [code,setCode]=useState(""),[name,setName]=useState(""),[selected,setSelected]=useState<number|null>(null);
- useEffect(()=>{if(!roomId)return;const load=()=>void getState();load();const timer=setInterval(load,1500);return()=>clearInterval(timer)},[roomId,hostToken]);
- useEffect(()=>setSelected(null),[state?.room.currentQuestion]);
+export default function GroupQuiz() {
+  const [role, setRole] = useState<"" | "host" | "player">("");
+  const [grade, setGrade] = useState("中学2年生"),
+    [unit, setUnit] = useState("過去形・過去進行形"),
+    [level, setLevel] = useState("A1");
+  const [makeMode, setMakeMode] = useState<"auto" | "myQuestions" | "manual">(
+      "auto",
+    ),
+    [questionNotes, setQuestionNotes] = useState("");
+  const [speakingCount, setSpeakingCount] = useState(2),
+    [listening, setListening] = useState(false),
+    [transcript, setTranscript] = useState("");
+  const [manualQuestions, setManualQuestions] = useState<Question[]>([
+    emptyQuestion(),
+  ]);
+  const [questions, setQuestions] = useState<Question[]>([]),
+    [loading, setLoading] = useState(false),
+    [notice, setNotice] = useState("");
+  const [roomId, setRoomId] = useState(""),
+    [hostToken, setHostToken] = useState(""),
+    [playerId, setPlayerId] = useState(""),
+    [state, setState] = useState<State | null>(null);
+  const [code, setCode] = useState(""),
+    [name, setName] = useState(""),
+    [selected, setSelected] = useState<number | null>(null);
+  useEffect(() => {
+    if (!roomId) return;
+    const load = () => void getState();
+    load();
+    const timer = setInterval(load, 1500);
+    return () => clearInterval(timer);
+  }, [roomId, hostToken]);
+  useEffect(() => {
+    setSelected(null);
+    setTranscript("");
+    setListening(false);
+  }, [state?.room.currentQuestion]);
 
- async function api(path:string,data:any){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),j=await r.json();if(!r.ok)throw new Error(j.error||"通信に失敗しました。");return j}
- async function getState(){try{setState(await api("/api/group",{action:"state",roomId,hostToken}))}catch(e){setNotice(message(e))}}
- async function generate(){if(makeMode==="myQuestions"&&!questionNotes.trim()){setNotice("作りたい問題やメモを入力してください。");return}setLoading(true);setNotice(makeMode==="myQuestions"?"AIが先生の問題をクイズに整えています…":"AIが問題を作っています…");try{const j=await api("/api/ai",{action:"groupQuiz",settings:{level:grade,targetLevel:"英検3級",cefr:level,proficiencyType:"cefr",mode:"grammar",topic:"",unit,showHints:false,showTranslations:false},count:10,sourceText:makeMode==="myQuestions"?questionNotes:"",clientId:clientId()});setQuestions(j.questions);setNotice("")}catch(e){setNotice(message(e))}finally{setLoading(false)}}
- async function create(){if(questions.length<3)return;setLoading(true);try{const j=await api("/api/group",{action:"create",title:`${unit}クイズ`,questions});setRoomId(j.roomId);setHostToken(j.hostToken);setNotice("")}catch(e){setNotice(message(e))}finally{setLoading(false)}}
- function updateManual(index:number,patch:Partial<Question>){setManualQuestions(list=>list.map((q,i)=>i===index?{...q,...patch}:q))}
- function updateOption(questionIndex:number,optionIndex:number,value:string){setManualQuestions(list=>list.map((q,i)=>i===questionIndex?{...q,options:q.options.map((o,j)=>j===optionIndex?value:o)}:q))}
- function useManualQuestions(){const ready=manualQuestions.filter(q=>q.question.trim()&&q.options.every(o=>o.trim())&&Number.isInteger(q.answer));if(ready.length<3){setNotice("問題文・4つの選択肢・正解を、3問以上入力してください。");return}setQuestions(ready.map(q=>({...q,question:q.question.trim(),options:q.options.map(o=>o.trim()),explanation:q.explanation?.trim()||"先生が作った問題です。"})));setNotice("")}
- async function join(e:FormEvent){e.preventDefault();setLoading(true);try{const j=await api("/api/group",{action:"join",code,name});setRoomId(j.roomId);setPlayerId(j.playerId);setNotice("")}catch(e){setNotice(message(e))}finally{setLoading(false)}}
- async function command(command:string){setLoading(true);try{await api("/api/group",{action:"host",roomId,hostToken,command});await getState()}catch(e){setNotice(message(e))}finally{setLoading(false)}}
- async function answer(index:number){if(selected!==null||!state)return;setSelected(index);try{await api("/api/group",{action:"submit",roomId,playerId,questionIndex:state.room.currentQuestion,optionIndex:index})}catch(e){setNotice(message(e))}}
- function reset(){setRole("");setRoomId("");setHostToken("");setPlayerId("");setState(null);setQuestions([]);setSelected(null);setNotice("")}
+  async function api(path: string, data: any) {
+    const r = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+      j = await r.json();
+    if (!r.ok) throw new Error(j.error || "通信に失敗しました。");
+    return j;
+  }
+  async function getState() {
+    try {
+      setState(await api("/api/group", { action: "state", roomId, hostToken }));
+    } catch (e) {
+      setNotice(message(e));
+    }
+  }
+  async function generate() {
+    if (makeMode === "myQuestions" && !questionNotes.trim()) {
+      setNotice("作りたい問題やメモを入力してください。");
+      return;
+    }
+    setLoading(true);
+    setNotice(
+      makeMode === "myQuestions"
+        ? "AIが先生の問題をクイズに整えています…"
+        : "AIが問題を作っています…",
+    );
+    try {
+      const j = await api("/api/ai", {
+        action: "groupQuiz",
+        settings: {
+          level: grade,
+          targetLevel: "英検3級",
+          cefr: level,
+          proficiencyType: "cefr",
+          mode: "grammar",
+          topic: "",
+          unit,
+          showHints: false,
+          showTranslations: false,
+        },
+        count: 10,
+        speakingCount,
+        sourceText: makeMode === "myQuestions" ? questionNotes : "",
+        clientId: clientId(),
+      });
+      setQuestions(j.questions);
+      setNotice("");
+    } catch (e) {
+      setNotice(message(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function create() {
+    if (questions.length < 3) return;
+    setLoading(true);
+    try {
+      const j = await api("/api/group", {
+        action: "create",
+        title: `${unit}クイズ`,
+        questions,
+      });
+      setRoomId(j.roomId);
+      setHostToken(j.hostToken);
+      setNotice("");
+    } catch (e) {
+      setNotice(message(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+  function updateManual(index: number, patch: Partial<Question>) {
+    setManualQuestions((list) =>
+      list.map((q, i) => (i === index ? { ...q, ...patch } : q)),
+    );
+  }
+  function updateOption(
+    questionIndex: number,
+    optionIndex: number,
+    value: string,
+  ) {
+    setManualQuestions((list) =>
+      list.map((q, i) =>
+        i === questionIndex
+          ? {
+              ...q,
+              options: q.options.map((o, j) => (j === optionIndex ? value : o)),
+            }
+          : q,
+      ),
+    );
+  }
+  function useManualQuestions() {
+    const ready = manualQuestions.filter(
+      (q) =>
+        q.question.trim() &&
+        q.options.every((o) => o.trim()) &&
+        Number.isInteger(q.answer),
+    );
+    if (ready.length < 3) {
+      setNotice("問題文・4つの選択肢・正解を、3問以上入力してください。");
+      return;
+    }
+    setQuestions(
+      ready.map((q) => ({
+        ...q,
+        question: q.question.trim(),
+        options: q.options.map((o) => o.trim()),
+        explanation: q.explanation?.trim() || "先生が作った問題です。",
+      })),
+    );
+    setNotice("");
+  }
+  async function join(e: FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const j = await api("/api/group", { action: "join", code, name });
+      setRoomId(j.roomId);
+      setPlayerId(j.playerId);
+      setNotice("");
+    } catch (e) {
+      setNotice(message(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function command(command: string) {
+    setLoading(true);
+    try {
+      await api("/api/group", { action: "host", roomId, hostToken, command });
+      await getState();
+    } catch (e) {
+      setNotice(message(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+  async function answer(index: number) {
+    if (selected !== null || !state) return;
+    setSelected(index);
+    try {
+      await api("/api/group", {
+        action: "submit",
+        roomId,
+        playerId,
+        questionIndex: state.room.currentQuestion,
+        optionIndex: index,
+      });
+    } catch (e) {
+      setNotice(message(e));
+    }
+  }
+  function speakAnswer() {
+    if (selected !== null || !q) return;
+    const Recognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!Recognition) {
+      setNotice(
+        "このブラウザは音声認識に対応していません。ChromeまたはSafariの最新版でお試しください。",
+      );
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 3;
+    setListening(true);
+    setTranscript("");
+    recognition.onresult = (event: any) => {
+      const heard =
+        Array.from(event.results?.[0] || [])
+          .map((x: any) => String(x.transcript || ""))
+          .find(Boolean) || "";
+      setTranscript(heard);
+      setListening(false);
+      void answer(speechMatches(heard, q.options[0]) ? 0 : 1);
+    };
+    recognition.onerror = () => {
+      setListening(false);
+      setNotice(
+        "音声を聞き取れませんでした。マイクを許可して、もう一度お試しください。",
+      );
+    };
+    recognition.onend = () => setListening(false);
+    recognition.start();
+  }
+  function reset() {
+    setRole("");
+    setRoomId("");
+    setHostToken("");
+    setPlayerId("");
+    setState(null);
+    setQuestions([]);
+    setSelected(null);
+    setNotice("");
+  }
 
- if(!role)return <main className="groupApp"><header className="groupTop"><a href="/">← SpeakUp!</a><b>Color Stage</b></header><section className="groupHero"><div className="wordOrbit" aria-hidden="true"><i>GO!</i><i>ABC</i><i>?</i><i>WOW</i></div><span>SPEAKUP! COLOR STAGE</span><h1>ことばが弾ける、<br/><em>みんなの英語ステージ。</em></h1><p>先生の問題に、参加コードで最大40人まで参加できます。</p><div className="roleCards"><button className="hostRole" onClick={()=>setRole("host")}><i>✦</i><b>ステージをつくる</b><small>AIや自分の問題でゲームを進行</small><strong>先生はこちら →</strong></button><button className="playerRole" onClick={()=>setRole("player")}><i>↗</i><b>ステージに入る</b><small>6桁コードとニックネームで参加</small><strong>生徒はこちら →</strong></button></div></section></main>;
+  if (!role)
+    return (
+      <main className="groupApp">
+        <header className="groupTop">
+          <a href="/">← SpeakUp!</a>
+          <b>Color Stage</b>
+        </header>
+        <section className="groupHero">
+          <div className="wordOrbit" aria-hidden="true">
+            <i>GO!</i>
+            <i>ABC</i>
+            <i>?</i>
+            <i>WOW</i>
+          </div>
+          <span>SPEAKUP! COLOR STAGE</span>
+          <h1>
+            ことばが弾ける、
+            <br />
+            <em>みんなの英語ステージ。</em>
+          </h1>
+          <p>先生の問題に、参加コードで最大40人まで参加できます。</p>
+          <div className="roleCards">
+            <button className="hostRole" onClick={() => setRole("host")}>
+              <i>✦</i>
+              <b>ステージをつくる</b>
+              <small>AIや自分の問題でゲームを進行</small>
+              <strong>先生はこちら →</strong>
+            </button>
+            <button className="playerRole" onClick={() => setRole("player")}>
+              <i>↗</i>
+              <b>ステージに入る</b>
+              <small>6桁コードとニックネームで参加</small>
+              <strong>生徒はこちら →</strong>
+            </button>
+          </div>
+        </section>
+      </main>
+    );
 
- if(role==="host"&&!roomId)return <main className="groupApp"><header className="groupTop"><button onClick={reset}>← 戻る</button><b>ステージ作成室</b></header><section className="hostSetup"><div className="setupTitle"><span>QUIZ STUDIO</span><h1>文法クイズをつくる</h1><p>AI作成、AI読み込み、1問ずつの手入力から選べます。</p></div><div className="makeSwitch three"><button className={makeMode==="auto"?"on":""} onClick={()=>setMakeMode("auto")}><i>✦</i><b>AIにおまかせ</b><small>単元から10問を新しく作成</small></button><button className={makeMode==="myQuestions"?"on":""} onClick={()=>setMakeMode("myQuestions")}><i>⌁</i><b>まとめてAI読込</b><small>メモや問題文をAIが4択化</small></button><button className={makeMode==="manual"?"on":""} onClick={()=>setMakeMode("manual")}><i>✎</i><b>1問ずつ手入力</b><small>問題と答えをそのまま登録</small></button></div>{makeMode==="myQuestions"&&<label className="sourceBox"><span>先生の問題・メモ</span><textarea maxLength={7000} value={questionNotes} onChange={e=>setQuestionNotes(e.target.value)} placeholder={'例：\n・I played tennis yesterday. を疑問文にする問題\n・go の過去形を答える問題\n・比較級 taller than の使い方\n\n答えや解説があれば一緒に貼り付けてください。'} /><small>{questionNotes.length}/7000文字　文章、箇条書き、既存の問題をそのまま貼れます。</small></label>}{makeMode==="manual"&&<div className="manualBuilder"><div className="manualHead"><div><b>問題を1問ずつ入力</b><small>最低3問・最大15問</small></div><span>{manualQuestions.length}問</span></div>{manualQuestions.map((q,i)=><article className="manualQuestion" key={i}><header><strong>QUESTION {String(i+1).padStart(2,"0")}</strong>{manualQuestions.length>1&&<button onClick={()=>setManualQuestions(list=>list.filter((_,j)=>j!==i))}>削除</button>}</header><label>問題文<input maxLength={500} value={q.question} onChange={e=>updateManual(i,{question:e.target.value})} placeholder="例：I (  ) tennis yesterday." /></label><div className="manualOptions">{q.options.map((o,j)=><label className={q.answer===j?"isAnswer":""} key={j}><button type="button" onClick={()=>updateManual(i,{answer:j})} aria-label={`${String.fromCharCode(65+j)}を正解にする`}>{q.answer===j?"✓":String.fromCharCode(65+j)}</button><input maxLength={180} value={o} onChange={e=>updateOption(i,j,e.target.value)} placeholder={`選択肢 ${String.fromCharCode(65+j)}`} /></label>)}</div><label>解説（任意）<textarea maxLength={600} value={q.explanation||""} onChange={e=>updateManual(i,{explanation:e.target.value})} placeholder="正解の理由を短く入力" /></label></article>)}<button className="addQuestion" disabled={manualQuestions.length>=15} onClick={()=>setManualQuestions(list=>[...list,emptyQuestion()])}>＋ 問題を追加する</button></div>}<div className="settingPanel"><label>学年<div className="pills">{grades.map(g=><button className={grade===g?"on":""} onClick={()=>{setGrade(g);setUnit(units[g][0])}} key={g}>{g}</button>)}</div></label><label>英語レベル<div className="pills">{["A0","A1","A2","B1"].map(v=><button className={level===v?"on":""} onClick={()=>setLevel(v)} key={v}>{v}</button>)}</div></label><label>出題単元<div className="pills">{units[grade].map(v=><button className={unit===v?"on":""} onClick={()=>setUnit(v)} key={v}>{v}</button>)}</div></label></div><button className="bigAction" onClick={makeMode==="manual"?useManualQuestions:generate} disabled={loading}>{loading?"AIが準備中…":makeMode==="myQuestions"?"⌁ AIに10問へ整えてもらう":makeMode==="manual"?"入力した問題を確認する →":"✦ AIで10問つくる"}</button>{notice&&<p className="groupNotice">{notice}</p>}{questions.length>0&&<div className="preview"><div><h2>問題を確認</h2><span>{questions.length}問</span></div>{questions.map((q,i)=><details key={i}><summary><i>{String(i+1).padStart(2,"0")}</i>{q.question}</summary><ol>{q.options.map((o,j)=><li className={j===q.answer?"correct":""} key={j}><b>{String.fromCharCode(65+j)}</b>{o}</li>)}</ol><small>{q.explanation}</small></details>)}<button className="bigAction" onClick={create} disabled={loading}>この{questions.length}問でステージを開く →</button></div>}</section></main>;
+  if (role === "host" && !roomId)
+    return (
+      <main className="groupApp">
+        <header className="groupTop">
+          <button onClick={reset}>← 戻る</button>
+          <b>ステージ作成室</b>
+        </header>
+        <section className="hostSetup">
+          <div className="setupTitle">
+            <span>QUIZ STUDIO</span>
+            <h1>文法クイズをつくる</h1>
+            <p>AI作成、AI読み込み、1問ずつの手入力から選べます。</p>
+          </div>
+          <div className="makeSwitch three">
+            <button
+              className={makeMode === "auto" ? "on" : ""}
+              onClick={() => setMakeMode("auto")}
+            >
+              <i>✦</i>
+              <b>AIにおまかせ</b>
+              <small>単元から10問を新しく作成</small>
+            </button>
+            <button
+              className={makeMode === "myQuestions" ? "on" : ""}
+              onClick={() => setMakeMode("myQuestions")}
+            >
+              <i>⌁</i>
+              <b>まとめてAI読込</b>
+              <small>メモや問題文をAIが4択化</small>
+            </button>
+            <button
+              className={makeMode === "manual" ? "on" : ""}
+              onClick={() => setMakeMode("manual")}
+            >
+              <i>✎</i>
+              <b>1問ずつ手入力</b>
+              <small>問題と答えをそのまま登録</small>
+            </button>
+          </div>
+          {makeMode === "myQuestions" && (
+            <label className="sourceBox">
+              <span>先生の問題・メモ</span>
+              <textarea
+                maxLength={7000}
+                value={questionNotes}
+                onChange={(e) => setQuestionNotes(e.target.value)}
+                placeholder={
+                  "例：\n・I played tennis yesterday. を疑問文にする問題\n・go の過去形を答える問題\n・比較級 taller than の使い方\n\n答えや解説があれば一緒に貼り付けてください。"
+                }
+              />
+              <small>
+                {questionNotes.length}
+                /7000文字　文章、箇条書き、既存の問題をそのまま貼れます。
+              </small>
+            </label>
+          )}
+          {makeMode === "manual" && (
+            <div className="manualBuilder">
+              <div className="manualHead">
+                <div>
+                  <b>問題を1問ずつ入力</b>
+                  <small>最低3問・最大15問</small>
+                </div>
+                <span>{manualQuestions.length}問</span>
+              </div>
+              {manualQuestions.map((q, i) => (
+                <article className="manualQuestion" key={i}>
+                  <header>
+                    <strong>QUESTION {String(i + 1).padStart(2, "0")}</strong>
+                    {manualQuestions.length > 1 && (
+                      <button
+                        onClick={() =>
+                          setManualQuestions((list) =>
+                            list.filter((_, j) => j !== i),
+                          )
+                        }
+                      >
+                        削除
+                      </button>
+                    )}
+                  </header>
+                  <label>
+                    問題文
+                    <input
+                      maxLength={500}
+                      value={q.question}
+                      onChange={(e) =>
+                        updateManual(i, { question: e.target.value })
+                      }
+                      placeholder="例：I (  ) tennis yesterday."
+                    />
+                  </label>
+                  <div className="manualOptions">
+                    {q.options.map((o, j) => (
+                      <label
+                        className={q.answer === j ? "isAnswer" : ""}
+                        key={j}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => updateManual(i, { answer: j })}
+                          aria-label={`${String.fromCharCode(65 + j)}を正解にする`}
+                        >
+                          {q.answer === j ? "✓" : String.fromCharCode(65 + j)}
+                        </button>
+                        <input
+                          maxLength={180}
+                          value={o}
+                          onChange={(e) => updateOption(i, j, e.target.value)}
+                          placeholder={`選択肢 ${String.fromCharCode(65 + j)}`}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <label>
+                    解説（任意）
+                    <textarea
+                      maxLength={600}
+                      value={q.explanation || ""}
+                      onChange={(e) =>
+                        updateManual(i, { explanation: e.target.value })
+                      }
+                      placeholder="正解の理由を短く入力"
+                    />
+                  </label>
+                </article>
+              ))}
+              <button
+                className="addQuestion"
+                disabled={manualQuestions.length >= 15}
+                onClick={() =>
+                  setManualQuestions((list) => [...list, emptyQuestion()])
+                }
+              >
+                ＋ 問題を追加する
+              </button>
+            </div>
+          )}
+          <div className="settingPanel">
+            <label>
+              学年
+              <div className="pills">
+                {grades.map((g) => (
+                  <button
+                    className={grade === g ? "on" : ""}
+                    onClick={() => {
+                      setGrade(g);
+                      setUnit(units[g][0]);
+                    }}
+                    key={g}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+            </label>
+            <label>
+              英語レベル
+              <div className="pills">
+                {["A0", "A1", "A2", "B1"].map((v) => (
+                  <button
+                    className={level === v ? "on" : ""}
+                    onClick={() => setLevel(v)}
+                    key={v}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </label>
+            <label>
+              出題単元
+              <div className="pills">
+                {units[grade].map((v) => (
+                  <button
+                    className={unit === v ? "on" : ""}
+                    onClick={() => setUnit(v)}
+                    key={v}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </label>
+            {makeMode !== "manual" && (
+              <label>
+                発音問題（最大3問）
+                <div className="pills speakingCount">
+                  {[0, 1, 2, 3].map((v) => (
+                    <button
+                      className={speakingCount === v ? "on" : ""}
+                      onClick={() => setSpeakingCount(v)}
+                      key={v}
+                    >
+                      {v === 0 ? "なし" : `${v}問`}
+                    </button>
+                  ))}
+                </div>
+              </label>
+            )}
+          </div>
+          <button
+            className="bigAction"
+            onClick={makeMode === "manual" ? useManualQuestions : generate}
+            disabled={loading}
+          >
+            {loading
+              ? "AIが準備中…"
+              : makeMode === "myQuestions"
+                ? "⌁ AIに10問へ整えてもらう"
+                : makeMode === "manual"
+                  ? "入力した問題を確認する →"
+                  : "✦ AIで10問つくる"}
+          </button>
+          {notice && <p className="groupNotice">{notice}</p>}
+          {questions.length > 0 && (
+            <div className="preview">
+              <div>
+                <h2>問題を確認</h2>
+                <span>{questions.length}問</span>
+              </div>
+              {questions.map((q, i) => (
+                <details key={i}>
+                  <summary>
+                    <i>{String(i + 1).padStart(2, "0")}</i>
+                    {q.type === "speaking" && <b className="speakBadge">発音</b>}
+                    {q.question}
+                  </summary>
+                  <ol className={q.type === "speaking" ? "speakPreview" : ""}>
+                    {q.options.map((o, j) => o && (
+                      <li className={j === q.answer ? "correct" : ""} key={j}>
+                        <b>{String.fromCharCode(65 + j)}</b>
+                        {o}
+                      </li>
+                    ))}
+                  </ol>
+                  <small>{q.explanation}</small>
+                </details>
+              ))}
+              <button className="bigAction" onClick={create} disabled={loading}>
+                この{questions.length}問でステージを開く →
+              </button>
+            </div>
+          )}
+        </section>
+      </main>
+    );
 
- if(role==="player"&&!roomId)return <main className="groupApp joinScreen"><header className="groupTop"><button onClick={reset}>← 戻る</button><b>Color Stage</b></header><form onSubmit={join} className="joinCard"><i>↗</i><span>JOIN THE STAGE</span><h1>ステージに入ろう</h1><label>参加コード<input inputMode="numeric" maxLength={6} value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,""))} placeholder="123456"/></label><label>ニックネーム<input maxLength={16} value={name} onChange={e=>setName(e.target.value)} placeholder="例：はる"/></label><button disabled={code.length!==6||!name.trim()||loading}>{loading?"参加中…":"ステージに入る →"}</button>{notice&&<p className="groupNotice">{notice}</p>}</form></main>;
+  if (role === "player" && !roomId)
+    return (
+      <main className="groupApp joinScreen">
+        <header className="groupTop">
+          <button onClick={reset}>← 戻る</button>
+          <b>Color Stage</b>
+        </header>
+        <form onSubmit={join} className="joinCard">
+          <i>↗</i>
+          <span>JOIN THE STAGE</span>
+          <h1>ステージに入ろう</h1>
+          <label>
+            参加コード
+            <input
+              inputMode="numeric"
+              maxLength={6}
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              placeholder="123456"
+            />
+          </label>
+          <label>
+            ニックネーム
+            <input
+              maxLength={16}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例：はる"
+            />
+          </label>
+          <button disabled={code.length !== 6 || !name.trim() || loading}>
+            {loading ? "参加中…" : "ステージに入る →"}
+          </button>
+          {notice && <p className="groupNotice">{notice}</p>}
+        </form>
+      </main>
+    );
 
- if(!state)return <main className="groupApp loadingScreen">読み込み中…</main>;
- const isHost=role==="host",q=state.room.question,answered=state.answeredPlayerIds.includes(playerId);
- return <main className="groupApp gameScreen"><header className="gameHeader"><b>{state.room.title}</b><span>参加コード <strong>{state.room.code}</strong></span><span>{state.players.length}/40人</span></header>
- {state.room.status==="lobby"&&<section className="lobby"><h1>{isHost?"参加を待っています":"先生が開始するまで待ってね！"}</h1><div className="codeBox"><small>参加コード</small><strong>{state.room.code}</strong><span>eikaiwaapp.vercel.app/group</span></div><div className="playerCloud">{state.players.map(p=><span key={p.id}>{p.name}</span>)}</div>{isHost&&<button className="bigAction" disabled={!state.players.length||loading} onClick={()=>command("start")}>クイズを開始する</button>}</section>}
- {(state.room.status==="question"||state.room.status==="reveal")&&q&&<section className="liveQuestion"><div className="questionTop"><span>ROUND {state.room.currentQuestion+1}<small> / {state.room.totalQuestions}</small></span><b>{state.answerCount}/{state.players.length}人 回答</b></div><h1>{q.question}</h1>{isHost?<div className="hostAnswers"><div className="answerGrid">{q.options.map((o,i)=><div className={`answer ${colors[i]} ${state.room.status==="reveal"&&q.answer===i?"winner":""}`} key={i}><i>{String.fromCharCode(65+i)}</i><b>{o}</b></div>)}</div><button className="bigAction" disabled={loading} onClick={()=>command(state.room.status==="question"?"reveal":"next")}>{state.room.status==="question"?"答えをオープン！":"次のラウンドへ →"}</button></div>:<div className="answerGrid playerGrid">{q.options.map((o,i)=><button disabled={selected!==null||state.room.status==="reveal"} className={`answer ${colors[i]} ${selected===i?"picked":""} ${state.room.status==="reveal"&&q.answer===i?"winner":""}`} onClick={()=>answer(i)} key={i}><i>{String.fromCharCode(65+i)}</i><b>{o}</b></button>)}{answered&&state.room.status==="question"&&<p className="answered">答えを送信しました。オープンを待ってね！</p>}{state.room.status==="reveal"&&<p className="explanation"><b>{q.answer===selected?"正解！ NICE!":"正解は "+q.options[q.answer??0]}</b><span>{q.explanation}</span></p>}</div>}</section>}
- {state.room.status==="finished"&&<section className="final"><span>FINAL RANKING</span><h1>最終結果</h1><div className="podium">{state.players.slice(0,10).map((p,i)=><div className={p.id===playerId?"me":""} key={p.id}><strong>{i+1}</strong><b>{p.name}</b><span>{p.score.toLocaleString()}点</span></div>)}</div><button className="bigAction" onClick={reset}>{isHost?"新しいクイズを作る":"トップへ戻る"}</button></section>}
- {notice&&<p className="floatingNotice">{notice}</p>}</main>;
+  if (!state)
+    return <main className="groupApp loadingScreen">読み込み中…</main>;
+  const isHost = role === "host",
+    q = state.room.question,
+    answered = state.answeredPlayerIds.includes(playerId);
+  return (
+    <main className="groupApp gameScreen">
+      <header className="gameHeader">
+        <b>{state.room.title}</b>
+        <span>
+          参加コード <strong>{state.room.code}</strong>
+        </span>
+        <span>{state.players.length}/40人</span>
+      </header>
+      {state.room.status === "lobby" && (
+        <section className="lobby">
+          <h1>
+            {isHost ? "参加を待っています" : "先生が開始するまで待ってね！"}
+          </h1>
+          <div className="codeBox">
+            <small>参加コード</small>
+            <strong>{state.room.code}</strong>
+            <span>eikaiwaapp.vercel.app/group</span>
+          </div>
+          <div className="playerCloud">
+            {state.players.map((p) => (
+              <span key={p.id}>{p.name}</span>
+            ))}
+          </div>
+          {isHost && (
+            <button
+              className="bigAction"
+              disabled={!state.players.length || loading}
+              onClick={() => command("start")}
+            >
+              クイズを開始する
+            </button>
+          )}
+        </section>
+      )}
+      {(state.room.status === "question" || state.room.status === "reveal") &&
+        q && (
+          <section className="liveQuestion">
+            <div className="questionTop">
+              <span>
+                ROUND {state.room.currentQuestion + 1}
+                <small> / {state.room.totalQuestions}</small>
+              </span>
+              <b>
+                {state.answerCount}/{state.players.length}人 回答
+              </b>
+            </div>
+            <h1>{q.question}</h1>
+            {isHost ? (
+              <div className="hostAnswers">
+                {q.type === "speaking" ? <div className="speakingCard hostSpeaking"><span>🎙️ 発音チャレンジ</span><strong>{q.options[0]}</strong><small>生徒はマイクでこの英文に答えます</small></div> : <div className="answerGrid">
+                  {q.options.map((o, i) => (
+                    <div
+                      className={`answer ${colors[i]} ${state.room.status === "reveal" && q.answer === i ? "winner" : ""}`}
+                      key={i}
+                    >
+                      <i>{String.fromCharCode(65 + i)}</i>
+                      <b>{o}</b>
+                    </div>
+                  ))}
+                </div>}
+                <button
+                  className="bigAction"
+                  disabled={loading}
+                  onClick={() =>
+                    command(
+                      state.room.status === "question" ? "reveal" : "next",
+                    )
+                  }
+                >
+                  {state.room.status === "question"
+                    ? "答えをオープン！"
+                    : "次のラウンドへ →"}
+                </button>
+              </div>
+            ) : (
+              q.type === "speaking" ? <div className="speakingCard playerSpeaking"><span>🎙️ SPEAKING CHALLENGE</span><strong>{q.options[0]}</strong><small>{listening?"聞いています…":"マイクを押して、英文を声に出そう"}</small><button className={`micButton ${listening?"listening":""}`} disabled={selected!==null||state.room.status==="reveal"||listening} onClick={speakAnswer} aria-label="英語を話して答える">{listening?"●":"🎤"}</button>{transcript&&<p className="spokenText">聞き取った英語：<b>{transcript}</b></p>}{answered&&state.room.status==="question"&&<p className="answered">発音を送信しました。答え合わせを待ってね！</p>}{state.room.status==="reveal"&&<p className="explanation"><b>{selected===0?"発音できました！ NICE!":"もう一度ゆっくり言ってみよう"}</b><span>{q.explanation}</span></p>}</div> : <div className="answerGrid playerGrid">
+                {q.options.map((o, i) => (
+                  <button
+                    disabled={
+                      selected !== null || state.room.status === "reveal"
+                    }
+                    className={`answer ${colors[i]} ${selected === i ? "picked" : ""} ${state.room.status === "reveal" && q.answer === i ? "winner" : ""}`}
+                    onClick={() => answer(i)}
+                    key={i}
+                  >
+                    <i>{String.fromCharCode(65 + i)}</i>
+                    <b>{o}</b>
+                  </button>
+                ))}
+                {answered && state.room.status === "question" && (
+                  <p className="answered">
+                    答えを送信しました。オープンを待ってね！
+                  </p>
+                )}
+                {state.room.status === "reveal" && (
+                  <p className="explanation">
+                    <b>
+                      {q.answer === selected
+                        ? "正解！ NICE!"
+                        : "正解は " + q.options[q.answer ?? 0]}
+                    </b>
+                    <span>{q.explanation}</span>
+                  </p>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+      {state.room.status === "finished" && (
+        <section className="final">
+          <span>FINAL RANKING</span>
+          <h1>最終結果</h1>
+          <div className="podium">
+            <div className="rankingHead"><strong>順位</strong><b>名前</b><span>得点</span></div>
+            {state.players.slice(0, 10).map((p, i) => (
+              <div className={p.id === playerId ? "me" : ""} key={p.id}>
+                <strong>{i + 1}</strong>
+                <b>{p.name}</b>
+                <span>{p.score.toLocaleString()}点</span>
+              </div>
+            ))}
+          </div>
+          <button className="bigAction" onClick={reset}>
+            {isHost ? "新しいクイズを作る" : "トップへ戻る"}
+          </button>
+        </section>
+      )}
+      {notice && <p className="floatingNotice">{notice}</p>}
+    </main>
+  );
 }
-function clientId(){let x=localStorage.getItem("speakup-client-id");if(!x){x=crypto.randomUUID();localStorage.setItem("speakup-client-id",x)}return x}
-function message(e:unknown){return e instanceof Error?e.message:"エラーが発生しました。"}
-function emptyQuestion():Question{return{question:"",options:["","","",""],answer:0,explanation:""}}
+function clientId() {
+  let x = localStorage.getItem("speakup-client-id");
+  if (!x) {
+    x = crypto.randomUUID();
+    localStorage.setItem("speakup-client-id", x);
+  }
+  return x;
+}
+function message(e: unknown) {
+  return e instanceof Error ? e.message : "エラーが発生しました。";
+}
+function emptyQuestion(): Question {
+  return {
+    question: "",
+    options: ["", "", "", ""],
+    answer: 0,
+    explanation: "",
+  };
+}
+function speechMatches(heard: string, expected: string) {
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9' ]/g, " ").replace(/\s+/g, " ").trim();
+  const actual = normalize(heard), target = normalize(expected);
+  if (!actual || !target) return false;
+  if (actual === target) return true;
+  const actualWords = actual.split(" "), targetWords = target.split(" ");
+  return targetWords.filter((word) => actualWords.includes(word)).length / targetWords.length >= 0.75;
+}
