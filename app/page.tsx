@@ -722,23 +722,6 @@ export default function Home() {
               {lessonMinutes ? formatTime(secondsLeft) : `${turns} turns`}
             </span>
           </div>
-          <div className="voiceSettings">
-            <span>🔊 ネイティブ音声</span>
-            <div>
-              <button
-                className={audioSpeed === "slow" ? "selected" : ""}
-                onClick={() => setAudioSpeed("slow")}
-              >
-                ゆっくり
-              </button>
-              <button
-                className={audioSpeed === "normal" ? "selected" : ""}
-                onClick={() => setAudioSpeed("normal")}
-              >
-                普通
-              </button>
-            </div>
-          </div>
           <div className="messages">
             {messages.map((message, index) => (
               <div className={`row ${message.role}`} key={index}>
