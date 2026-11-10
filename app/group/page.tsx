@@ -17,7 +17,6 @@ type State = {
     status: "lobby" | "question" | "reveal" | "finished";
     currentQuestion: number;
     totalQuestions: number;
-    gameMode: "normal" | "block";
     question: Question | null;
   };
   players: Player[];
@@ -67,7 +66,6 @@ const colors = ["red", "blue", "yellow", "green"];
 
 export default function GroupQuiz() {
   const [role, setRole] = useState<"" | "host" | "player">("");
-  const [gameMode, setGameMode] = useState<"normal" | "block">("normal");
   const [grade, setGrade] = useState("中学2年生"),
     [unit, setUnit] = useState("過去形・過去進行形"),
     [level, setLevel] = useState("A1");
@@ -91,10 +89,14 @@ export default function GroupQuiz() {
   const [code, setCode] = useState(""),
     [name, setName] = useState(""),
     [selected, setSelected] = useState<number | null>(null);
-  const [lastAward, setLastAward] = useState(0),
-    [blockReady, setBlockReady] = useState(false),
-    [blockBoard, setBlockBoard] = useState<boolean[]>(() => Array(36).fill(false)),
-    [blockMessage, setBlockMessage] = useState("");
+  const [lastResult, setLastResult] = useState<{
+    correct: boolean;
+    points: number;
+    speedPoints: number;
+    streakBonus: number;
+    streak: number;
+    boost: boolean;
+  } | null>(null);
   useEffect(() => {
     if (!roomId) return;
     const load = () => void getState();
@@ -106,9 +108,7 @@ export default function GroupQuiz() {
     setSelected(null);
     setTranscript("");
     setListening(false);
-    setLastAward(0);
-    setBlockReady(false);
-    setBlockMessage("");
+    setLastResult(null);
   }, [state?.room.currentQuestion]);
 
   async function api(path: string, data: any) {
@@ -194,7 +194,6 @@ export default function GroupQuiz() {
       const j = await api("/api/group", {
         action: "create",
         title: `${unit}クイズ`,
-        gameMode,
         questions,
       });
       setRoomId(j.roomId);
@@ -300,42 +299,17 @@ export default function GroupQuiz() {
         questionIndex: state.room.currentQuestion,
         optionIndex: index,
       });
-      setLastAward(Number(result.points) || 0);
-      setBlockReady(state.room.gameMode === "block" && result.correct);
+      setLastResult({
+        correct: Boolean(result.correct),
+        points: Number(result.points) || 0,
+        speedPoints: Number(result.speedPoints) || 0,
+        streakBonus: Number(result.streakBonus) || 0,
+        streak: Number(result.streak) || 0,
+        boost: Boolean(result.boost),
+      });
     } catch (e) {
       setNotice(message(e));
     }
-  }
-  async function placeBlock(origin: number) {
-    if (!state || !blockReady) return;
-    const row = Math.floor(origin / 6), col = origin % 6;
-    if (row > 4 || col > 4) {
-      setBlockMessage("L字ブロックが盤面に入る場所を選んでください。");
-      return;
-    }
-    const cells = [origin, origin + 1, origin + 6];
-    if (cells.some((cell) => blockBoard[cell])) {
-      setBlockMessage("重ならない場所を選んでください。");
-      return;
-    }
-    const next = [...blockBoard];
-    cells.forEach((cell) => (next[cell] = true));
-    const fullRows = Array.from({ length: 6 }, (_, r) => r).filter((r) =>
-      Array.from({ length: 6 }, (_, c) => next[r * 6 + c]).every(Boolean),
-    );
-    const fullCols = Array.from({ length: 6 }, (_, c) => c).filter((c) =>
-      Array.from({ length: 6 }, (_, r) => next[r * 6 + c]).every(Boolean),
-    );
-    fullRows.forEach((r) => Array.from({ length: 6 }, (_, c) => (next[r * 6 + c] = false)));
-    fullCols.forEach((c) => Array.from({ length: 6 }, (_, r) => (next[r * 6 + c] = false)));
-    setBlockBoard(next);
-    setBlockReady(false);
-    const lines = Math.min(2, fullRows.length + fullCols.length);
-    if (lines) {
-      const result = await api("/api/group", { action: "blast", roomId, playerId, questionIndex: state.room.currentQuestion, lines });
-      setBlockMessage(`${lines}ライン消去！ +${result.bonus}点`);
-      await getState();
-    } else setBlockMessage("ブロックを配置しました！");
   }
   function speakAnswer() {
     if (selected !== null || !q) return;
@@ -605,17 +579,6 @@ export default function GroupQuiz() {
           )}
           <div className="settingPanel">
             <label>
-              ゲームタイプ
-              <div className="gameModeCards">
-                <button className={gameMode === "normal" ? "on" : ""} onClick={() => setGameMode("normal")}>
-                  <b>⚡ ノーマル</b><small>正解と回答速度で勝負</small>
-                </button>
-                <button className={gameMode === "block" ? "on" : ""} onClick={() => setGameMode("block")}>
-                  <b>▦ ブロック</b><small>正解して盤面をそろえる</small>
-                </button>
-              </div>
-            </label>
-            <label>
               学年
               <div className="pills">
                 {grades.map((g) => (
@@ -783,7 +746,6 @@ export default function GroupQuiz() {
           参加コード <strong>{state.room.code}</strong>
         </span>
         <span>{state.players.length}/40人</span>
-        <span className="modeBadge">{state.room.gameMode === "block" ? "▦ BLOCK" : "⚡ NORMAL"}</span>
       </header>
       {state.room.status === "lobby" && (
         <section className="lobby">
@@ -823,6 +785,9 @@ export default function GroupQuiz() {
                 {state.answerCount}/{state.players.length}人 回答
               </b>
             </div>
+            {(state.room.currentQuestion + 1) % 3 === 0 && (
+              <div className="boostBanner">✦ BOOST ROUND　得点1.5倍！</div>
+            )}
             <h1>{q.question}</h1>
             {isHost ? (
               <div className="hostAnswers">
@@ -918,7 +883,7 @@ export default function GroupQuiz() {
                 ))}
                 {answered && state.room.status === "question" && (
                   <p className="answered">
-                    答えを送信しました。獲得予定 {lastAward.toLocaleString()}点
+                    回答ロック！結果発表をお楽しみに ✨
                   </p>
                 )}
                 {state.room.status === "reveal" && (
@@ -933,15 +898,16 @@ export default function GroupQuiz() {
                 )}
               </div>
             )}
-            {!isHost && state.room.status === "reveal" && state.room.gameMode === "block" && blockReady && (
-              <div className="blockChallenge">
-                <div><b>正解ブロック獲得！</b><span>緑のL字を置く左上をタップ</span></div>
-                <div className="blockBoard">
-                  {blockBoard.map((filled, index) => (
-                    <button key={index} className={filled ? "filled" : ""} onClick={() => placeBlock(index)} aria-label={`マス${index + 1}`} />
-                  ))}
+            {!isHost && state.room.status === "reveal" && lastResult && (
+              <div className={`awardReveal ${lastResult.correct ? "success" : "miss"}`}>
+                <span>{lastResult.correct ? speedTitle(lastResult.speedPoints) : "KEEP GOING!"}</span>
+                <strong>{lastResult.correct ? `+${lastResult.points.toLocaleString()}` : "0"}<small> pts</small></strong>
+                <div>
+                  <i>正解・速度 {lastResult.speedPoints.toLocaleString()}</i>
+                  {lastResult.streakBonus > 0 && <i>🔥 コンボ +{lastResult.streakBonus}</i>}
+                  {lastResult.boost && <i>✦ BOOST ×1.5</i>}
                 </div>
-                {blockMessage && <p>{blockMessage}</p>}
+                {lastResult.streak >= 2 && <b>{lastResult.streak}問連続正解！</b>}
               </div>
             )}
             {state.room.status === "reveal" && (
@@ -993,6 +959,13 @@ function clientId() {
 }
 function message(e: unknown) {
   return e instanceof Error ? e.message : "エラーが発生しました。";
+}
+function speedTitle(points: number) {
+  return points >= 900
+    ? "⚡ LIGHTNING!"
+    : points >= 700
+      ? "🚀 SPEEDY!"
+      : "✨ CORRECT!";
 }
 function emptyQuestion(): Question {
   return {
