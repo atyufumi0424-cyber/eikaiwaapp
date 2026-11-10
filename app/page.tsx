@@ -193,16 +193,17 @@ export default function Home() {
         : settings.mode === "custom"
           ? `Hello! Let's talk about ${settings.topic}. What do you think about it?`
           : "Hello! Nice to meet you. How are you today?";
-    setNotice("最初のネイティブ音声を準備しています…");
-    await preloadNatural(opening, "slow");
-    setMessages([{ role: "assistant", text: opening }]);
+    setMessages([]);
     setLessonReview(null);
     setSecondsLeft(lessonMinutes * 60);
     setTranslations({});
     setSuggestions([]);
     setFailedMessage("");
-    setNotice("");
     setStarted(true);
+    setNotice("最初のネイティブ音声を準備しています…");
+    await preloadNatural(opening, "slow");
+    setMessages([{ role: "assistant", text: opening }]);
+    setNotice("");
     playPreparedVoice(opening, "slow");
   }
 
