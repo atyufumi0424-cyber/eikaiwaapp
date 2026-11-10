@@ -182,7 +182,7 @@ export default function Home() {
     }
   }
 
-  function startLesson() {
+  async function startLesson() {
     if (settings.mode === "custom" && !settings.topic.trim()) {
       setNotice("話したいお題を入力してください。");
       return;
@@ -193,6 +193,8 @@ export default function Home() {
         : settings.mode === "custom"
           ? `Hello! Let's talk about ${settings.topic}. What do you think about it?`
           : "Hello! Nice to meet you. How are you today?";
+    setNotice("最初のネイティブ音声を準備しています…");
+    await preloadNatural(opening, "slow");
     setMessages([{ role: "assistant", text: opening }]);
     setLessonReview(null);
     setSecondsLeft(lessonMinutes * 60);
@@ -201,6 +203,7 @@ export default function Home() {
     setFailedMessage("");
     setNotice("");
     setStarted(true);
+    playPreparedVoice(opening, "slow");
   }
 
   async function sendMessage(event: FormEvent) {
@@ -224,6 +227,8 @@ export default function Home() {
         settings,
         clientId: getClientId(),
       });
+      setNotice("ネイティブ音声を準備しています…");
+      await preloadNatural(result.text, audioSpeed);
       setMessages([...next, { role: "assistant", text: result.text }]);
       setSuggestions(
         settings.showHints && Array.isArray(result.suggestions)
@@ -236,7 +241,7 @@ export default function Home() {
           ? "混雑のため安定モードで返答しました。会話はそのまま続けられます。"
           : "",
       );
-      void speakNatural(result.text, audioSpeed);
+      playPreparedVoice(result.text, audioSpeed);
     } catch (error) {
       setNotice(errorText(error));
       setFailedMessage(text);
@@ -257,6 +262,8 @@ export default function Home() {
         settings,
         clientId: getClientId(),
       });
+      setNotice("ネイティブ音声を準備しています…");
+      await preloadNatural(result.text, audioSpeed);
       setMessages([...messages, { role: "assistant", text: result.text }]);
       setSuggestions(
         settings.showHints && Array.isArray(result.suggestions)
@@ -265,7 +272,7 @@ export default function Home() {
       );
       setFailedMessage("");
       setNotice(result.fallback ? "混雑のため安定モードで返答しました。" : "");
-      void speakNatural(result.text, audioSpeed);
+      playPreparedVoice(result.text, audioSpeed);
     } catch (error) {
       setNotice(errorText(error));
     } finally {
@@ -304,7 +311,8 @@ export default function Home() {
 
   function startPronunciation(target: string) {
     setPronunciation({ target });
-    void speakNatural(target, "slow");
+    setNotice("ネイティブ音声を準備しています…");
+    void speakNatural(target, "slow").finally(() => setNotice(""));
   }
   function recordPronunciation() {
     if (!pronunciation) return;
@@ -1237,16 +1245,56 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 let activeAudio: HTMLAudioElement | null = null;
+const voiceCache = new Map<string, Blob>();
+const voiceRequests = new Map<string, Promise<Blob>>();
+function voiceKey(text: string, speed: "slow" | "normal") {
+  return `${speed}:${text.trim()}`;
+}
+async function loadNaturalVoice(text: string, speed: "slow" | "normal") {
+  const key = voiceKey(text, speed);
+  const cached = voiceCache.get(key);
+  if (cached) return cached;
+  const pending = voiceRequests.get(key);
+  if (pending) return pending;
+  const request = (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 18000);
+    try {
+      const response = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, speed }),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error("TTS unavailable");
+      const blob = await response.blob();
+      voiceCache.set(key, blob);
+      // Keep memory bounded during long lessons.
+      if (voiceCache.size > 24) voiceCache.delete(voiceCache.keys().next().value!);
+      return blob;
+    } finally {
+      clearTimeout(timer);
+      voiceRequests.delete(key);
+    }
+  })();
+  voiceRequests.set(key, request);
+  return request;
+}
+async function preloadNatural(text: string, speed: "slow" | "normal") {
+  try {
+    await loadNaturalVoice(text, speed);
+  } catch {
+    // Preloading is optional; playback still has the device voice fallback.
+  }
+}
+function playPreparedVoice(text: string, speed: "slow" | "normal") {
+  if (voiceCache.has(voiceKey(text, speed))) void speakNatural(text, speed);
+  else fallbackSpeak(text, speed);
+}
 async function speakNatural(text: string, speed: "slow" | "normal") {
   try {
     activeAudio?.pause();
-    const response = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, speed }),
-    });
-    if (!response.ok) throw new Error("TTS unavailable");
-    const url = URL.createObjectURL(await response.blob());
+    const url = URL.createObjectURL(await loadNaturalVoice(text, speed));
     const audio = new Audio(url);
     activeAudio = audio;
     audio.preservesPitch = true;
