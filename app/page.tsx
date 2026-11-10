@@ -1240,7 +1240,8 @@ async function speakNatural(text: string, speed: "slow" | "normal") {
     const url = URL.createObjectURL(await response.blob());
     const audio = new Audio(url);
     activeAudio = audio;
-    audio.preservesPitch = true;\n    audio.playbackRate = 1;
+    audio.preservesPitch = true;
+    audio.playbackRate = 1;
     audio.onended = () => {
       URL.revokeObjectURL(url);
       if (activeAudio === audio) activeAudio = null;
