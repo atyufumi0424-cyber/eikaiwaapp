@@ -281,10 +281,19 @@ export default function Home() {
     }
     setBusy(true);
     try {
-      const result = await callApi("translate", {
-        text,
-        clientId: getClientId(),
-      });
+      let result: any;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          result = await callApi("translate", {
+            text,
+            clientId: getClientId(),
+          });
+          break;
+        } catch (error) {
+          if (attempt === 1) throw error;
+          await sleep(700);
+        }
+      }
       setTranslations({ ...translations, [index]: result.text });
     } catch (error) {
       setNotice(errorText(error));
@@ -1267,6 +1276,8 @@ function fallbackSpeak(text: string, speed: "slow" | "normal") {
   speechSynthesis.speak(utterance);
 }
 function errorText(error: unknown) {
+  if (error instanceof TypeError || (error instanceof Error && /failed to fetch/i.test(error.message)))
+    return "通信が一時的に不安定です。もう一度お試しください。";
   return error instanceof DOMException && error.name === "AbortError"
     ? "応答に時間がかかっています。少し待ってからもう一度お試しください。"
     : error instanceof Error
