@@ -112,14 +112,32 @@ export default function GroupQuiz() {
   }, [state?.room.currentQuestion]);
 
   async function api(path: string, data: any) {
-    const r = await fetch(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      }),
-      j = await r.json();
-    if (!r.ok) throw new Error(j.error || "通信に失敗しました。");
-    return j;
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 30000);
+        const r = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(data),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "通信に失敗しました。");
+        return j;
+      } catch (error) {
+        lastError = error;
+        if (error instanceof Error && !/fetch|network|abort|通信/i.test(error.message)) throw error;
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 700 * (attempt + 1)));
+      }
+    }
+    throw new Error(
+      lastError instanceof DOMException && lastError.name === "AbortError"
+        ? "通信に時間がかかっています。ネット接続を確認してください。"
+        : "インターネットに接続できません。接続を確認して、もう一度お試しください。",
+    );
   }
   async function getState() {
     try {
@@ -161,7 +179,10 @@ export default function GroupQuiz() {
       setQuestions(j.questions);
       setNotice("");
     } catch (e) {
-      setNotice(message(e));
+      if (/インターネット|ネット接続|Failed to fetch/i.test(message(e))) {
+        setQuestions(offlineQuiz(unit));
+        setNotice("通信が不安定なため、単元に合った予備問題10問へ切り替えました。接続が戻ればAI生成も利用できます。");
+      } else setNotice(message(e));
     } finally {
       setLoading(false);
     }
@@ -1000,4 +1021,33 @@ function speechMatches(heard: string, expected: string) {
       targetWords.length >=
     0.75
   );
+}
+function offlineQuiz(unit: string): Question[] {
+  const past = [
+    ["空欄に入る語を選びなさい：I (  ) tennis yesterday.", ["play", "plays", "played", "playing"], 2, "yesterdayがあるので過去形playedを使います。"],
+    ["空欄に入る語を選びなさい：She (  ) TV last night.", ["watch", "watches", "watched", "watching"], 2, "last nightがあるのでwatchedです。"],
+    ["空欄に入る語を選びなさい：We (  ) to school yesterday.", ["go", "went", "gone", "going"], 1, "goの過去形はwentです。"],
+    ["空欄に入る語を選びなさい：He (  ) breakfast at seven.", ["eat", "ate", "eats", "eating"], 1, "eatの過去形はateです。"],
+    ["正しい疑問文を選びなさい。", ["Did you study English?", "Do you studied English?", "Did you studied English?", "Were you study English?"], 0, "過去の疑問文はDid＋主語＋動詞の原形です。"],
+    ["空欄に入る語を選びなさい：I was (  ) a book then.", ["read", "reads", "reading", "to read"], 2, "過去進行形はwas＋動詞ingです。"],
+    ["空欄に入る語を選びなさい：They were (  ) soccer.", ["play", "played", "playing", "plays"], 2, "過去進行形はwere＋動詞ingです。"],
+    ["『私は昨日忙しかった』に合う英文を選びなさい。", ["I am busy yesterday.", "I was busy yesterday.", "I were busy yesterday.", "I did busy yesterday."], 1, "be動詞の過去形wasを使います。"],
+    ["空欄に入る語を選びなさい：My mother (  ) dinner yesterday.", ["cook", "cooked", "cooks", "cooking"], 1, "規則動詞cookの過去形はcookedです。"],
+    ["正しい否定文を選びなさい。", ["I did not play tennis.", "I not played tennis.", "I did not played tennis.", "I was not play tennis."], 0, "過去の否定文はdid not＋動詞の原形です。"],
+  ];
+  const basic = [
+    ["空欄に入る語を選びなさい：I (  ) English every day.", ["study", "studies", "studied", "studying"], 0, "主語がIなので動詞はstudyです。"],
+    ["空欄に入る語を選びなさい：She (  ) music.", ["like", "likes", "liked", "liking"], 1, "主語がSheなのでlikesです。"],
+    ["正しい英文を選びなさい。", ["He can swim.", "He can swims.", "He cans swim.", "He can swimming."], 0, "canの後ろは動詞の原形です。"],
+    ["空欄に入る語を選びなさい：We are (  ) soccer now.", ["play", "played", "playing", "plays"], 2, "現在進行形はbe動詞＋動詞ingです。"],
+    ["『あなたは本を読みますか』に合う英文を選びなさい。", ["Do you read books?", "Are you read books?", "Does you read books?", "Did you reads books?"], 0, "一般動詞の疑問文ではDoを使います。"],
+  ];
+  const source = /過去/.test(unit) ? past : [...basic, ...basic];
+  return source.slice(0, 10).map(([question, options, answer, explanation]) => ({
+    type: "grammar",
+    question: String(question),
+    options: options as string[],
+    answer: Number(answer),
+    explanation: String(explanation),
+  }));
 }
