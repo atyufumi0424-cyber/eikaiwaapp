@@ -1234,13 +1234,13 @@ async function speakNatural(text: string, speed: "slow" | "normal") {
     const response = await fetch("/api/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, speed }),
     });
     if (!response.ok) throw new Error("TTS unavailable");
     const url = URL.createObjectURL(await response.blob());
     const audio = new Audio(url);
     activeAudio = audio;
-    audio.playbackRate = speed === "slow" ? 0.82 : 1;
+    audio.preservesPitch = true;\n    audio.playbackRate = 1;
     audio.onended = () => {
       URL.revokeObjectURL(url);
       if (activeAudio === audio) activeAudio = null;
@@ -1256,7 +1256,13 @@ function fallbackSpeak(text: string, speed: "slow" | "normal") {
   speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = "en-US";
-  utterance.rate = speed === "slow" ? 0.72 : 0.9;
+  const voices = speechSynthesis.getVoices();
+  utterance.voice =
+    voices.find((voice) => /Google US English|Microsoft Aria|Ava|Samantha/i.test(voice.name)) ||
+    voices.find((voice) => voice.lang === "en-US") ||
+    null;
+  utterance.rate = speed === "slow" ? 0.88 : 1;
+  utterance.pitch = 1;
   speechSynthesis.speak(utterance);
 }
 function errorText(error: unknown) {
