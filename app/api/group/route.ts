@@ -12,6 +12,7 @@ export async function POST(req:NextRequest){
   if(action==="state")return roomState(b);
   if(action==="host")return hostAction(b);
   if(action==="submit")return submitAnswer(b);
+  if(action==="blast")return awardBlastBonus(b);
   return fail("不正な操作です。",400);
  }catch(e){return fail(e instanceof Error?e.message:"サーバーエラーです。",500)}
 }
@@ -23,7 +24,7 @@ async function db(path:string,init:RequestInit={}){
 }
 async function createRoom(b:any){
  const questions=safeQuestions(b.questions);if(questions.length<3)return fail("3問以上の問題が必要です。",400);
- const hostToken=crypto.randomUUID(),title=clean(b.title,60)||"英語文法クイズ";
+ const hostToken=crypto.randomUUID(),rawTitle=clean(b.title,52)||"英語文法クイズ",gameMode=b.gameMode==="block"?"block":"normal",title=gameMode==="block"?`[BLOCK] ${rawTitle}`:rawTitle;
  for(let i=0;i<6;i++){const code=String(Math.floor(100000+Math.random()*900000));try{
   const rows=await db("quiz_rooms",{method:"POST",body:JSON.stringify({code,host_token:hostToken,title,questions})});
   return ok({roomId:rows[0].id,code,hostToken});
@@ -41,11 +42,11 @@ async function joinRoom(b:any){
 async function roomState(b:any){
  const roomId=id(b.roomId);if(!roomId)return fail("ルームが見つかりません。",400);
  const rooms=await db(`quiz_rooms?id=eq.${roomId}&select=*`);if(!rooms.length)return fail("ルームが終了したか、見つかりません。",404);
- const room=rooms[0],isHost=String(b.hostToken||"")===room.host_token,qs=safeQuestions(room.questions),index=Number(room.current_question),q=qs[index];
+ const room=rooms[0],isHost=String(b.hostToken||"")===room.host_token,qs=safeQuestions(room.questions),index=Number(room.current_question),q=qs[index],gameMode=String(room.title||"").startsWith("[BLOCK] ")?"block":"normal",publicTitle=String(room.title||"").replace(/^\[BLOCK\] /,"");
  const players=await db(`quiz_players?room_id=eq.${roomId}&select=id,name,score,streak&order=score.desc,joined_at.asc`);
  const answers=index>=0?await db(`quiz_answers?room_id=eq.${roomId}&question_index=eq.${index}&select=player_id,option_index,correct,points`):[];
  const publicQuestion=q?{type:q.type||"grammar",question:q.question,options:q.options,...((room.status==="reveal"||room.status==="finished"||isHost)?{answer:q.answer,explanation:q.explanation||""}:{})}:null;
- return ok({room:{id:room.id,code:room.code,title:room.title,status:room.status,currentQuestion:index,totalQuestions:qs.length,question:publicQuestion,questionStartedAt:room.question_started_at},players,answeredPlayerIds:answers.map((a:any)=>a.player_id),answerCount:answers.length,...(isHost?{questions:qs}:{})});
+ return ok({room:{id:room.id,code:room.code,title:publicTitle,gameMode,status:room.status,currentQuestion:index,totalQuestions:qs.length,question:publicQuestion,questionStartedAt:room.question_started_at},players,answeredPlayerIds:answers.map((a:any)=>a.player_id),answerCount:answers.length,...(isHost?{questions:qs}:{})});
 }
 async function hostAction(b:any){
  const roomId=id(b.roomId),token=clean(b.hostToken,80),command=String(b.command||"");
@@ -67,6 +68,19 @@ async function submitAnswer(b:any){
  catch{return fail("すでに回答しています。",409)}
  await db(`quiz_players?id=eq.${playerId}`,{method:"PATCH",body:JSON.stringify({score:Number(players[0].score)+points+bonus,streak})});
  return ok({correct,points:points+bonus});
+}
+async function awardBlastBonus(b:any){
+ const roomId=id(b.roomId),playerId=id(b.playerId),questionIndex=Number(b.questionIndex),lines=Math.max(0,Math.min(2,Number(b.lines)||0));
+ if(!lines)return ok({bonus:0});
+ const rooms=await db(`quiz_rooms?id=eq.${roomId}&select=title,current_question`);if(!rooms.length||!String(rooms[0].title||"").startsWith("[BLOCK] "))return fail("ブロックモードではありません。",400);
+ if(Number(rooms[0].current_question)!==questionIndex)return fail("このラウンドのボーナス受付は終了しました。",409);
+ const answers=await db(`quiz_answers?room_id=eq.${roomId}&player_id=eq.${playerId}&question_index=eq.${questionIndex}&select=id,correct,points`);if(!answers.length||!answers[0].correct)return fail("正解した問題だけブロックを置けます。",403);
+ if(Number(answers[0].points)>1150)return fail("この問題のブロックボーナスは獲得済みです。",409);
+ const bonus=lines*300;
+ const players=await db(`quiz_players?id=eq.${playerId}&room_id=eq.${roomId}&select=score`);if(!players.length)return fail("参加者を確認できません。",403);
+ await db(`quiz_answers?id=eq.${answers[0].id}`,{method:"PATCH",body:JSON.stringify({points:Number(answers[0].points)+bonus})});
+ await db(`quiz_players?id=eq.${playerId}`,{method:"PATCH",body:JSON.stringify({score:Number(players[0].score)+bonus})});
+ return ok({bonus});
 }
 function safeQuestions(v:any):Question[]{return Array.isArray(v)?v.slice(0,20).filter(q=>q&&typeof q.question==="string"&&Array.isArray(q.options)&&q.options.length===4&&Number.isInteger(q.answer)&&q.answer>=0&&q.answer<4).map(q=>({type:q.type==="speaking"?"speaking":"grammar",question:clean(q.question,300),options:q.options.map((x:any)=>clean(x,120)),answer:q.type==="speaking"?0:q.answer,explanation:clean(q.explanation,300)})):[]}
 function clean(v:any,max:number){return typeof v==="string"?v.replace(/[\u0000-\u001f]/g," ").trim().slice(0,max):""}
