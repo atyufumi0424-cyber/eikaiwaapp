@@ -125,7 +125,7 @@ export async function POST(req: NextRequest) {
       const sourceRule = sourceText
         ? `The teacher supplied the source material below. Preserve its learning intent, correct any errors, and convert or expand it into exactly ${count} polished questions. Do not introduce grammar far beyond the selected unit. If the source contains fewer than ${count} ideas, create closely related variations. If it contains answers or explanations, respect them after checking accuracy.\n\nTEACHER SOURCE:\n${sourceText}`
         : `Create all questions from the selected unit.`;
-      const prompt = `Create exactly ${count} original English quiz questions for ${settings.level}, ${selectedLevel(settings)}. Unit: ${settings.unit || "basic grammar"}. ${sourceRule}\nExactly ${speakingCount} questions must have type "speaking" and the remaining ${count - speakingCount} must have type "grammar". For speaking questions, use a short useful English sentence appropriate to the unit: question is an easy Japanese instruction, options[0] is the exact expected English phrase, options[1..3] are empty strings, and answer is always 0. For grammar questions, use four short choices and exactly one correct answer. IMPORTANT: Every fill-in-the-blank sentence must itself be a complete ENGLISH sentence, for example "I (  ) tennis yesterday." Never translate the sentence into Japanese while leaving an English-word blank. Japanese may be used only for a separate instruction such as "空欄に入る語を選びなさい：I (  ) tennis yesterday." Questions and explanations should otherwise use easy Japanese. Keep each explanation to one short sentence. Include a balanced mix of fill-in-the-blank, word order, meaning, and natural sentences. Avoid repetitive wording. Return JSON only. Schema: {"questions":[{"type":"grammar|speaking","question":"...","options":["...","...","...","..."],"answer":0,"explanation":"..."}]}`;
+      const prompt = `Create exactly ${count} original English quiz questions for ${settings.level}, ${selectedLevel(settings)}. Unit: ${settings.unit || "basic grammar"}. ${sourceRule}\nExactly ${speakingCount} questions must have type "speaking" and the remaining ${count - speakingCount} must have type "grammar". For speaking questions, use a short useful English sentence appropriate to the unit: question is an easy Japanese instruction, options[0] is the exact expected English phrase, options[1..3] are empty strings, and answer is always 0. For grammar questions, use four short choices and exactly one correct answer. IMPORTANT: Every fill-in-the-blank sentence must itself be a complete ENGLISH sentence, for example "I (  ) tennis yesterday." Never translate the sentence into Japanese while leaving an English-word blank. Japanese may be used only for a separate instruction such as "空欄に入る語を選びなさい：I (  ) tennis yesterday." For paraphrase questions asking for the same meaning, NEVER include the original sentence unchanged as an option; every option must be a genuinely different sentence. All four options must be unique, and do not repeat a question in the same quiz. Questions and explanations should otherwise use easy Japanese. Keep each explanation to one short sentence. Include a balanced mix of fill-in-the-blank, word order, meaning, and natural sentences. Avoid repetitive wording. Return JSON only. Schema: {"questions":[{"type":"grammar|speaking","question":"...","options":["...","...","...","..."],"answer":0,"explanation":"..."}]}`;
       const data = await callAI(
         keys,
         geminiKeys,
@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
       );
       let questions = normalizeQuestions(
         parseJson(data.choices?.[0]?.message?.content)?.questions,
-      ).filter(isUsableGroupQuestion).slice(0, count);
+      ).filter(isUsableGroupQuestion).filter(uniqueQuestion()).slice(0, count);
       if (questions.length < count) {
         const missing = count - questions.length,
           repair = `Create exactly ${missing} additional four-choice grammar questions for ${settings.level}, ${selectedLevel(settings)}, unit ${settings.unit || "basic grammar"}. Every fill-in-the-blank sentence must be written as a complete English sentence such as "I (  ) tennis yesterday." Never put an English-word blank inside a Japanese sentence. Use easy Japanese only for a separate instruction and a one-sentence explanation. Each item needs type "grammar", four short options, and answer as an integer from 0 to 3. Return JSON only with schema {"questions":[{"type":"grammar","question":"...","options":["...","...","...","..."],"answer":0,"explanation":"..."}]}.`;
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
           ...questions,
           ...normalizeQuestions(
             parseJson(extra.choices?.[0]?.message?.content)?.questions,
-          ).filter(isUsableGroupQuestion),
+          ).filter(isUsableGroupQuestion).filter(uniqueQuestion(questions)),
         ].slice(0, count);
       }
       if (questions.length !== count)
@@ -607,6 +607,13 @@ function isUsableGroupQuestion(q: {
 }) {
   if (q.type === "speaking") return Boolean(q.options[0]);
   if (q.options.some((option) => !option)) return false;
+  const normalizedOptions = q.options.map(normalizeQuizText);
+  if (new Set(normalizedOptions).size !== normalizedOptions.length) return false;
+  if (/同じ意味|言い換え|ほぼ同じ/.test(q.question)) {
+    const englishParts = q.question.match(/[A-Za-z][A-Za-z0-9 '\-.,!?]+/g) || [];
+    const source = englishParts.sort((a, b) => b.length - a.length)[0];
+    if (source && normalizedOptions.includes(normalizeQuizText(source))) return false;
+  }
   const hasBlank = /\(\s*\)|＿+|_{2,}/.test(q.question);
   if (!hasBlank) return true;
   const hasJapanese = /[ぁ-んァ-ヶ一-龠]/.test(q.question);
@@ -616,6 +623,18 @@ function isUsableGroupQuestion(q: {
   ).length;
   // Reject examples such as「わたしはテニスを（ ）。」+ play/played.
   return !(hasJapanese && englishWords.length < 3 && englishWordChoices >= 3);
+}
+function normalizeQuizText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9']/g, "");
+}
+function uniqueQuestion(existing: Array<{ question: string }> = []) {
+  const seen = new Set(existing.map((item) => normalizeQuizText(item.question)));
+  return (question: { question: string }) => {
+    const key = normalizeQuizText(question.question);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  };
 }
 function ok(data: object) {
   return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
