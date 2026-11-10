@@ -87,7 +87,8 @@ async function geminiSpeech(
     : "Speak at a natural conversational pace.";
   for (const model of models) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 16000);
+    // Do not make the learner wait too long for a single provider/model.
+    const timer = setTimeout(() => controller.abort(), 7000);
     try {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
