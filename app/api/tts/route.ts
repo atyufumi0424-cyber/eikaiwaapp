@@ -15,14 +15,21 @@ export async function POST(request: NextRequest) {
     const geminiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "")
       .split(/[\n,]+/).map((key) => key.trim()).filter(Boolean);
 
+    const configuredModel = (process.env.GEMINI_TTS_MODEL || "").replace(/^models\//, "");
+    const geminiModels = Array.from(new Set([
+      configuredModel,
+      "gemini-3.1-flash-tts-preview",
+      "gemini-2.5-flash-preview-tts",
+    ].filter(Boolean)));
+
     for (const key of shuffled(geminiKeys)) {
-      const audio = await geminiSpeech(key, text, speed);
-      if (audio) {
-        return new NextResponse(audio, {
+      const result = await geminiSpeech(key, text, speed, geminiModels);
+      if (result) {
+        return new NextResponse(result.audio, {
           headers: {
             "Content-Type": "audio/wav",
             "Cache-Control": "public, max-age=86400",
-            "X-SpeakUp-Voice": "Gemini-Kore",
+            "X-SpeakUp-Voice": `Gemini-Kore:${result.model}`,
           },
         });
       }
@@ -68,17 +75,22 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function geminiSpeech(key: string, text: string, speed: "slow" | "normal") {
-  const model = (process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts").replace(/^models\//, "");
+async function geminiSpeech(
+  key: string,
+  text: string,
+  speed: "slow" | "normal",
+  models: string[],
+) {
   const voice = process.env.GEMINI_TTS_VOICE || "Kore";
   const pace = speed === "slow"
     ? "Speak clearly and a little slowly, with natural pauses. Do not sound robotic or stretched."
     : "Speak at a natural conversational pace.";
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+  for (const model of models) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 16000);
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
         method: "POST",
         headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
@@ -100,23 +112,26 @@ async function geminiSpeech(key: string, text: string, speed: "slow" | "normal")
         signal: controller.signal,
       },
     );
-    if (!response.ok) return null;
-    const data = await response.json();
-    const part = data?.candidates?.[0]?.content?.parts?.find(
-      (item: any) => item?.inlineData?.data || item?.inline_data?.data,
-    );
-    const inline = part?.inlineData || part?.inline_data;
-    if (!inline?.data) return null;
-    const pcm = Buffer.from(inline.data, "base64");
-    const mime = String(inline.mimeType || inline.mime_type || "");
-    if (/wav/i.test(mime)) return pcm;
-    const rate = Number(mime.match(/rate=(\d+)/i)?.[1]) || 24000;
-    return pcmToWav(pcm, rate);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timer);
+      if (!response.ok) continue;
+      const data = await response.json();
+      const part = data?.candidates?.[0]?.content?.parts?.find(
+        (item: any) => item?.inlineData?.data || item?.inline_data?.data,
+      );
+      const inline = part?.inlineData || part?.inline_data;
+      if (!inline?.data) continue;
+      const pcm = Buffer.from(inline.data, "base64");
+      const mime = String(inline.mimeType || inline.mime_type || "");
+      const audio = /wav/i.test(mime)
+        ? pcm
+        : pcmToWav(pcm, Number(mime.match(/rate=(\d+)/i)?.[1]) || 24000);
+      return { audio, model };
+    } catch {
+      // Try the next supported Gemini TTS model.
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  return null;
 }
 
 function pcmToWav(pcm: Buffer, sampleRate: number) {
