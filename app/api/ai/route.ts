@@ -125,7 +125,7 @@ export async function POST(req: NextRequest) {
       const sourceRule = sourceText
         ? `The teacher supplied the source material below. Preserve its learning intent, correct any errors, and convert or expand it into exactly ${count} polished questions. Do not introduce grammar far beyond the selected unit. If the source contains fewer than ${count} ideas, create closely related variations. If it contains answers or explanations, respect them after checking accuracy.\n\nTEACHER SOURCE:\n${sourceText}`
         : `Create all questions from the selected unit.`;
-      const prompt = `Create exactly ${count} original English quiz questions for ${settings.level}, ${selectedLevel(settings)}. Unit: ${settings.unit || "basic grammar"}. ${sourceRule}\nExactly ${speakingCount} questions must have type "speaking" and the remaining ${count - speakingCount} must have type "grammar". For speaking questions, use a short useful English sentence appropriate to the unit: question is an easy Japanese instruction, options[0] is the exact expected English phrase, options[1..3] are empty strings, and answer is always 0. For grammar questions, use four short choices and exactly one correct answer. Questions and explanations must be in easy Japanese. Keep each explanation to one short sentence. Include a balanced mix of fill-in-the-blank, word order, meaning, and natural sentences. Avoid repetitive wording. Return JSON only. Schema: {"questions":[{"type":"grammar|speaking","question":"...","options":["...","...","...","..."],"answer":0,"explanation":"..."}]}`;
+      const prompt = `Create exactly ${count} original English quiz questions for ${settings.level}, ${selectedLevel(settings)}. Unit: ${settings.unit || "basic grammar"}. ${sourceRule}\nExactly ${speakingCount} questions must have type "speaking" and the remaining ${count - speakingCount} must have type "grammar". For speaking questions, use a short useful English sentence appropriate to the unit: question is an easy Japanese instruction, options[0] is the exact expected English phrase, options[1..3] are empty strings, and answer is always 0. For grammar questions, use four short choices and exactly one correct answer. IMPORTANT: Every fill-in-the-blank sentence must itself be a complete ENGLISH sentence, for example "I (  ) tennis yesterday." Never translate the sentence into Japanese while leaving an English-word blank. Japanese may be used only for a separate instruction such as "空欄に入る語を選びなさい：I (  ) tennis yesterday." Questions and explanations should otherwise use easy Japanese. Keep each explanation to one short sentence. Include a balanced mix of fill-in-the-blank, word order, meaning, and natural sentences. Avoid repetitive wording. Return JSON only. Schema: {"questions":[{"type":"grammar|speaking","question":"...","options":["...","...","...","..."],"answer":0,"explanation":"..."}]}`;
       const data = await callAI(
         keys,
         geminiKeys,
@@ -134,10 +134,10 @@ export async function POST(req: NextRequest) {
       );
       let questions = normalizeQuestions(
         parseJson(data.choices?.[0]?.message?.content)?.questions,
-      ).slice(0, count);
+      ).filter(isUsableGroupQuestion).slice(0, count);
       if (questions.length < count) {
         const missing = count - questions.length,
-          repair = `Create exactly ${missing} additional four-choice grammar questions for ${settings.level}, ${selectedLevel(settings)}, unit ${settings.unit || "basic grammar"}. Use easy Japanese and a one-sentence explanation. Each item needs type "grammar", four short options, and answer as an integer from 0 to 3. Return JSON only with schema {"questions":[{"type":"grammar","question":"...","options":["...","...","...","..."],"answer":0,"explanation":"..."}]}.`;
+          repair = `Create exactly ${missing} additional four-choice grammar questions for ${settings.level}, ${selectedLevel(settings)}, unit ${settings.unit || "basic grammar"}. Every fill-in-the-blank sentence must be written as a complete English sentence such as "I (  ) tennis yesterday." Never put an English-word blank inside a Japanese sentence. Use easy Japanese only for a separate instruction and a one-sentence explanation. Each item needs type "grammar", four short options, and answer as an integer from 0 to 3. Return JSON only with schema {"questions":[{"type":"grammar","question":"...","options":["...","...","...","..."],"answer":0,"explanation":"..."}]}.`;
         const extra = await callAI(
           keys,
           geminiKeys,
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
           ...questions,
           ...normalizeQuestions(
             parseJson(extra.choices?.[0]?.message?.content)?.questions,
-          ),
+          ).filter(isUsableGroupQuestion),
         ].slice(0, count);
       }
       if (questions.length !== count)
@@ -599,6 +599,23 @@ function normalizeQuestions(x: unknown) {
       answer: q.type === "speaking" ? 0 : q.answer,
       explanation: clean(q.explanation, 600),
     }));
+}
+function isUsableGroupQuestion(q: {
+  type: string;
+  question: string;
+  options: string[];
+}) {
+  if (q.type === "speaking") return Boolean(q.options[0]);
+  if (q.options.some((option) => !option)) return false;
+  const hasBlank = /\(\s*\)|＿+|_{2,}/.test(q.question);
+  if (!hasBlank) return true;
+  const hasJapanese = /[ぁ-んァ-ヶ一-龠]/.test(q.question);
+  const englishWords = q.question.match(/[A-Za-z]+(?:'[A-Za-z]+)?/g) || [];
+  const englishWordChoices = q.options.filter((option) =>
+    /^[A-Za-z][A-Za-z '\-]*$/.test(option),
+  ).length;
+  // Reject examples such as「わたしはテニスを（ ）。」+ play/played.
+  return !(hasJapanese && englishWords.length < 3 && englishWordChoices >= 3);
 }
 function ok(data: object) {
   return NextResponse.json(data, { headers: { "Cache-Control": "no-store" } });
