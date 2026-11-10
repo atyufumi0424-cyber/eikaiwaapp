@@ -1,48 +1,140 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-const endpoint = "https://api.groq.com/openai/v1/audio/speech";
+const groqEndpoint = "https://api.groq.com/openai/v1/audio/speech";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const text = typeof body.text === "string"
-      ? body.text.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 200)
+      ? body.text.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 300)
       : "";
+    const speed = body.speed === "slow" ? "slow" : "normal";
     if (!text) return NextResponse.json({ error: "読み上げる文章がありません。" }, { status: 400 });
 
-    const keys = (process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY || "")
-      .split(/[\n,]+/).map((key) => key.trim()).filter((key) => key.startsWith("gsk_"));
-    if (!keys.length) return NextResponse.json({ error: "音声APIが設定されていません。" }, { status: 503 });
+    const geminiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "")
+      .split(/[\n,]+/).map((key) => key.trim()).filter(Boolean);
 
-    let lastStatus = 503;
-    for (const key of shuffled(keys)) {
+    for (const key of shuffled(geminiKeys)) {
+      const audio = await geminiSpeech(key, text, speed);
+      if (audio) {
+        return new NextResponse(audio, {
+          headers: {
+            "Content-Type": "audio/wav",
+            "Cache-Control": "public, max-age=86400",
+            "X-SpeakUp-Voice": "Gemini-Kore",
+          },
+        });
+      }
+    }
+
+    const groqKeys = (process.env.GROQ_API_KEYS || process.env.GROQ_API_KEY || "")
+      .split(/[\n,]+/).map((key) => key.trim()).filter((key) => key.startsWith("gsk_"));
+
+    for (const key of shuffled(groqKeys)) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 12000);
       try {
-        const response = await fetch(endpoint, {
+        const response = await fetch(groqEndpoint, {
           method: "POST",
           headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "canopylabs/orpheus-v1-english", input: text, voice: "hannah", response_format: "wav" }),
+          body: JSON.stringify({
+            model: "canopylabs/orpheus-v1-english",
+            input: text,
+            voice: "hannah",
+            response_format: "wav",
+          }),
           signal: controller.signal,
         });
-        lastStatus = response.status;
         if (response.ok) {
           return new NextResponse(await response.arrayBuffer(), {
-            headers: { "Content-Type": "audio/wav", "Cache-Control": "public, max-age=3600" },
+            headers: {
+              "Content-Type": "audio/wav",
+              "Cache-Control": "public, max-age=3600",
+              "X-SpeakUp-Voice": "Orpheus-Hannah",
+            },
           });
         }
-        if (![429, 500, 502, 503].includes(response.status)) break;
       } catch {
-        lastStatus = 503;
+        // Try the next configured key.
       } finally {
         clearTimeout(timer);
       }
     }
-    return NextResponse.json({ error: "高品質音声を利用できません。" }, { status: lastStatus === 429 ? 429 : 503 });
+
+    return NextResponse.json({ error: "高品質音声を利用できません。" }, { status: 503 });
   } catch {
     return NextResponse.json({ error: "音声生成に失敗しました。" }, { status: 500 });
   }
+}
+
+async function geminiSpeech(key: string, text: string, speed: "slow" | "normal") {
+  const model = (process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts").replace(/^models\//, "");
+  const voice = process.env.GEMINI_TTS_VOICE || "Kore";
+  const pace = speed === "slow"
+    ? "Speak clearly and a little slowly, with natural pauses. Do not sound robotic or stretched."
+    : "Speak at a natural conversational pace.";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        headers: { "x-goog-api-key": key, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `Read the transcript in natural American English. Use a warm, friendly English teacher voice. ${pace}\n\nTranscript:\n${text}`,
+            }],
+          }],
+          generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: voice },
+              },
+            },
+          },
+        }),
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    const part = data?.candidates?.[0]?.content?.parts?.find(
+      (item: any) => item?.inlineData?.data || item?.inline_data?.data,
+    );
+    const inline = part?.inlineData || part?.inline_data;
+    if (!inline?.data) return null;
+    const pcm = Buffer.from(inline.data, "base64");
+    const mime = String(inline.mimeType || inline.mime_type || "");
+    if (/wav/i.test(mime)) return pcm;
+    const rate = Number(mime.match(/rate=(\d+)/i)?.[1]) || 24000;
+    return pcmToWav(pcm, rate);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function pcmToWav(pcm: Buffer, sampleRate: number) {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
 }
 
 function shuffled<T>(items: T[]) {
