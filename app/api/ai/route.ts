@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     if (action === "translate") {
       const text = clean(b.text, 1200);
       if (!text) return fail("翻訳する文章がありません。", 400);
-      const data = await callAI(keys, geminiKeys, b.clientId, {
+      const payload = {
         model: model(),
         messages: [
           {
@@ -53,7 +53,18 @@ export async function POST(req: NextRequest) {
         ],
         temperature: 0.1,
         max_tokens: 500,
-      });
+      };
+      let data;
+      try {
+        // Translation is short and fast, so prefer Gemini and keep Groq as a
+        // separate fallback. This avoids one provider outage breaking the UI.
+        data = geminiKeys.length
+          ? await callGemini(geminiKeys, b.clientId, payload)
+          : await callAI(keys, geminiKeys, b.clientId, payload);
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        data = await callAI(keys, keys.length ? [] : geminiKeys, b.clientId, payload);
+      }
       return ok({
         text:
           clean(data.choices?.[0]?.message?.content, 1500) ||
