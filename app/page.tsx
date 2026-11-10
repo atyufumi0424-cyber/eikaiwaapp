@@ -99,6 +99,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [assistantThinking, setAssistantThinking] = useState(false);
   const [notice, setNotice] = useState("");
   const [listening, setListening] = useState(false);
   const [audioSpeed, setAudioSpeed] = useState<"slow" | "normal">("normal");
@@ -200,9 +201,10 @@ export default function Home() {
     setSuggestions([]);
     setFailedMessage("");
     setStarted(true);
-    setNotice("最初のネイティブ音声を準備しています…");
+    setAssistantThinking(true);
     await preloadNatural(opening, "slow");
     setMessages([{ role: "assistant", text: opening }]);
+    setAssistantThinking(false);
     setNotice("");
     playPreparedVoice(opening, "slow");
   }
@@ -215,11 +217,11 @@ export default function Home() {
     setMessages(next);
     setInput("");
     setBusy(true);
-    setNotice("AI先生につないでいます…");
+    setAssistantThinking(true);
+    setNotice("");
     try {
       const wait = classroomDelay(getClientId(), messages.length);
       if (wait > 500) {
-        setNotice("みんなで使えるよう、送信の順番を調整しています…");
         await sleep(wait);
       }
       const result = await callApi("chat", {
@@ -228,9 +230,9 @@ export default function Home() {
         settings,
         clientId: getClientId(),
       });
-      setNotice("ネイティブ音声を準備しています…");
       await preloadNatural(result.text, audioSpeed);
       setMessages([...next, { role: "assistant", text: result.text }]);
+      setAssistantThinking(false);
       setSuggestions(
         settings.showHints && Array.isArray(result.suggestions)
           ? result.suggestions.slice(0, 3)
@@ -244,6 +246,7 @@ export default function Home() {
       );
       playPreparedVoice(result.text, audioSpeed);
     } catch (error) {
+      setAssistantThinking(false);
       setNotice(errorText(error));
       setFailedMessage(text);
     } finally {
@@ -254,7 +257,8 @@ export default function Home() {
   async function retryMessage() {
     if (!failedMessage || busy) return;
     setBusy(true);
-    setNotice("もう一度送信しています…");
+    setAssistantThinking(true);
+    setNotice("");
     try {
       const history = messages.slice(0, -1);
       const result = await callApi("chat", {
@@ -263,9 +267,9 @@ export default function Home() {
         settings,
         clientId: getClientId(),
       });
-      setNotice("ネイティブ音声を準備しています…");
       await preloadNatural(result.text, audioSpeed);
       setMessages([...messages, { role: "assistant", text: result.text }]);
+      setAssistantThinking(false);
       setSuggestions(
         settings.showHints && Array.isArray(result.suggestions)
           ? result.suggestions.slice(0, 3)
@@ -275,6 +279,7 @@ export default function Home() {
       setNotice(result.fallback ? "混雑のため安定モードで返答しました。" : "");
       playPreparedVoice(result.text, audioSpeed);
     } catch (error) {
+      setAssistantThinking(false);
       setNotice(errorText(error));
     } finally {
       setBusy(false);
@@ -769,6 +774,16 @@ export default function Home() {
                 </div>
               </div>
             ))}
+            {assistantThinking && (
+              <div className="row assistant typingRow" aria-label="AIが入力中">
+                <i>AI</i>
+                <div className="typingBubble" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </div>
+              </div>
+            )}
             {busy && (
               <div className="row assistant">
                 <i>AI</i>
