@@ -9,6 +9,7 @@ type Question = {
   explanation?: string;
 };
 type Player = { id: string; name: string; score: number; streak: number };
+type GameMode = "normal" | "rush" | "fever";
 type State = {
   room: {
     id: string;
@@ -17,6 +18,7 @@ type State = {
     status: "lobby" | "question" | "reveal" | "finished";
     currentQuestion: number;
     totalQuestions: number;
+    gameMode: GameMode;
     question: Question | null;
   };
   players: Player[];
@@ -66,6 +68,7 @@ const colors = ["red", "blue", "yellow", "green"];
 
 export default function GroupQuiz() {
   const [role, setRole] = useState<"" | "host" | "player">("");
+  const [gameMode, setGameMode] = useState<GameMode>("normal");
   const [grade, setGrade] = useState("中学2年生"),
     [unit, setUnit] = useState("過去形・過去進行形"),
     [level, setLevel] = useState("A1");
@@ -96,6 +99,7 @@ export default function GroupQuiz() {
     streakBonus: number;
     streak: number;
     boost: boolean;
+    modeBonus: number;
   } | null>(null);
   useEffect(() => {
     if (!roomId) return;
@@ -194,6 +198,7 @@ export default function GroupQuiz() {
       const j = await api("/api/group", {
         action: "create",
         title: `${unit}クイズ`,
+        gameMode,
         questions,
       });
       setRoomId(j.roomId);
@@ -306,6 +311,7 @@ export default function GroupQuiz() {
         streakBonus: Number(result.streakBonus) || 0,
         streak: Number(result.streak) || 0,
         boost: Boolean(result.boost),
+        modeBonus: Number(result.modeBonus) || 0,
       });
     } catch (e) {
       setNotice(message(e));
@@ -579,6 +585,20 @@ export default function GroupQuiz() {
           )}
           <div className="settingPanel">
             <label>
+              ゲームモード
+              <div className="funModeCards">
+                <button className={gameMode === "normal" ? "on" : ""} onClick={() => setGameMode("normal")}>
+                  <b>🎯 スタンダード</b><small>正解と回答速度で勝負</small>
+                </button>
+                <button className={gameMode === "rush" ? "on rush" : ""} onClick={() => setGameMode("rush")}>
+                  <b>⚡ スピードラッシュ</b><small>7秒以内なら得点がさらにアップ</small>
+                </button>
+                <button className={gameMode === "fever" ? "on fever" : ""} onClick={() => setGameMode("fever")}>
+                  <b>🔥 コンボフィーバー</b><small>連続正解で倍率が最大2倍</small>
+                </button>
+              </div>
+            </label>
+            <label>
               学年
               <div className="pills">
                 {grades.map((g) => (
@@ -785,6 +805,12 @@ export default function GroupQuiz() {
                 {state.answerCount}/{state.players.length}人 回答
               </b>
             </div>
+            {state.room.gameMode === "rush" && (
+              <div className="modeEvent rush">⚡ SPEED RUSH　7秒以内の正解で1.2倍！</div>
+            )}
+            {state.room.gameMode === "fever" && (
+              <div className="modeEvent fever">🔥 COMBO FEVER　連続正解で倍率アップ！</div>
+            )}
             {(state.room.currentQuestion + 1) % 3 === 0 && (
               <div className="boostBanner">✦ BOOST ROUND　得点1.5倍！</div>
             )}
@@ -905,6 +931,7 @@ export default function GroupQuiz() {
                 <div>
                   <i>正解・速度 {lastResult.speedPoints.toLocaleString()}</i>
                   {lastResult.streakBonus > 0 && <i>🔥 コンボ +{lastResult.streakBonus}</i>}
+                  {lastResult.modeBonus > 0 && <i>🎮 モードボーナス +{lastResult.modeBonus}</i>}
                   {lastResult.boost && <i>✦ BOOST ×1.5</i>}
                 </div>
                 {lastResult.streak >= 2 && <b>{lastResult.streak}問連続正解！</b>}
