@@ -9,7 +9,7 @@ type Question = {
   explanation?: string;
 };
 type Player = { id: string; name: string; score: number; streak: number };
-type GameMode = "normal" | "rush" | "fever";
+type GameMode = "normal" | "boss" | "risk";
 type State = {
   room: {
     id: string;
@@ -25,6 +25,7 @@ type State = {
   answeredPlayerIds: string[];
   answerCount: number;
   questions?: Question[];
+  boss?: { hp: number; maxHp: number; damage: number };
 };
 const grades = ["中学1年生", "中学2年生", "中学3年生", "高校生"];
 const units: Record<string, string[]> = {
@@ -91,7 +92,8 @@ export default function GroupQuiz() {
     [state, setState] = useState<State | null>(null);
   const [code, setCode] = useState(""),
     [name, setName] = useState(""),
-    [selected, setSelected] = useState<number | null>(null);
+    [selected, setSelected] = useState<number | null>(null),
+    [wager, setWager] = useState<1 | 2 | 3>(1);
   const [lastResult, setLastResult] = useState<{
     correct: boolean;
     points: number;
@@ -113,6 +115,7 @@ export default function GroupQuiz() {
     setTranscript("");
     setListening(false);
     setLastResult(null);
+    setWager(1);
   }, [state?.room.currentQuestion]);
 
   async function api(path: string, data: any) {
@@ -303,6 +306,7 @@ export default function GroupQuiz() {
         playerId,
         questionIndex: state.room.currentQuestion,
         optionIndex: index,
+        wager,
       });
       setLastResult({
         correct: Boolean(result.correct),
@@ -590,11 +594,11 @@ export default function GroupQuiz() {
                 <button className={gameMode === "normal" ? "on" : ""} onClick={() => setGameMode("normal")}>
                   <b>🎯 スタンダード</b><small>正解と回答速度で勝負</small>
                 </button>
-                <button className={gameMode === "rush" ? "on rush" : ""} onClick={() => setGameMode("rush")}>
-                  <b>⚡ スピードラッシュ</b><small>7秒以内なら得点がさらにアップ</small>
+                <button className={gameMode === "boss" ? "on boss" : ""} onClick={() => setGameMode("boss")}>
+                  <b>👾 ボスバトル</b><small>クラス全員の正解でボスを倒す協力戦</small>
                 </button>
-                <button className={gameMode === "fever" ? "on fever" : ""} onClick={() => setGameMode("fever")}>
-                  <b>🔥 コンボフィーバー</b><small>連続正解で倍率が最大2倍</small>
+                <button className={gameMode === "risk" ? "on risk" : ""} onClick={() => setGameMode("risk")}>
+                  <b>🎲 リスクチャレンジ</b><small>問題ごとに1倍・2倍・3倍を賭ける</small>
                 </button>
               </div>
             </label>
@@ -805,11 +809,19 @@ export default function GroupQuiz() {
                 {state.answerCount}/{state.players.length}人 回答
               </b>
             </div>
-            {state.room.gameMode === "rush" && (
-              <div className="modeEvent rush">⚡ SPEED RUSH　7秒以内の正解で1.2倍！</div>
+            {state.room.gameMode === "boss" && state.boss && (
+              <div className="bossBattle">
+                <div><b>👾 ENGLISH BOSS</b><span>残りHP {state.boss.hp}/{state.boss.maxHp}</span></div>
+                <div className="bossHp"><i style={{width:`${Math.max(0,state.boss.hp/state.boss.maxHp*100)}%`}} /></div>
+                <small>みんなの正解が1ダメージ！力を合わせて倒そう</small>
+              </div>
             )}
-            {state.room.gameMode === "fever" && (
-              <div className="modeEvent fever">🔥 COMBO FEVER　連続正解で倍率アップ！</div>
+            {state.room.gameMode === "risk" && !isHost && state.room.status === "question" && selected === null && (
+              <div className="riskPicker">
+                <b>🎲 この問題に何倍賭ける？</b>
+                <div>{([1,2,3] as const).map(value => <button className={wager===value?"on":""} onClick={()=>setWager(value)} key={value}>×{value}<small>{value===1?"安全":value===2?"ミドル":"勝負！"}</small></button>)}</div>
+                <p>×2・×3は高得点。ただし不正解だと減点！</p>
+              </div>
             )}
             {(state.room.currentQuestion + 1) % 3 === 0 && (
               <div className="boostBanner">✦ BOOST ROUND　得点1.5倍！</div>
@@ -927,11 +939,11 @@ export default function GroupQuiz() {
             {!isHost && state.room.status === "reveal" && lastResult && (
               <div className={`awardReveal ${lastResult.correct ? "success" : "miss"}`}>
                 <span>{lastResult.correct ? speedTitle(lastResult.speedPoints) : "KEEP GOING!"}</span>
-                <strong>{lastResult.correct ? `+${lastResult.points.toLocaleString()}` : "0"}<small> pts</small></strong>
+                <strong>{lastResult.points > 0 ? `+${lastResult.points.toLocaleString()}` : lastResult.points.toLocaleString()}<small> pts</small></strong>
                 <div>
                   <i>正解・速度 {lastResult.speedPoints.toLocaleString()}</i>
                   {lastResult.streakBonus > 0 && <i>🔥 コンボ +{lastResult.streakBonus}</i>}
-                  {lastResult.modeBonus > 0 && <i>🎮 モードボーナス +{lastResult.modeBonus}</i>}
+                  {lastResult.modeBonus !== 0 && <i>🎮 モード効果 {lastResult.modeBonus > 0 ? "+" : ""}{lastResult.modeBonus}</i>}
                   {lastResult.boost && <i>✦ BOOST ×1.5</i>}
                 </div>
                 {lastResult.streak >= 2 && <b>{lastResult.streak}問連続正解！</b>}
@@ -951,6 +963,12 @@ export default function GroupQuiz() {
         )}
       {state.room.status === "finished" && (
         <section className="final">
+          {state.room.gameMode === "boss" && state.boss && (
+            <div className={`bossResult ${state.boss.hp === 0 ? "win" : "lose"}`}>
+              <b>{state.boss.hp === 0 ? "🎉 BOSS DEFEATED!" : "👾 BOSS SURVIVED..."}</b>
+              <span>{state.boss.hp === 0 ? "クラス全員の勝利！" : `あと${state.boss.hp}ダメージでした`}</span>
+            </div>
+          )}
           <span>FINAL RANKING</span>
           <h1>最終結果</h1>
           <div className="podium">
