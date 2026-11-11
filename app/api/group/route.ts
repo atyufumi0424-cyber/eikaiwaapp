@@ -23,7 +23,7 @@ async function db(path:string,init:RequestInit={}){
 }
 async function createRoom(b:any){
  const questions=safeQuestions(b.questions);if(questions.length<3)return fail("3問以上の問題が必要です。",400);
- const hostToken=crypto.randomUUID(),mode=gameMode(b.gameMode),marker=mode==="rush"?"[RUSH] ":mode==="fever"?"[FEVER] ":"",title=marker+(clean(b.title,50)||"英語文法クイズ");
+ const hostToken=crypto.randomUUID(),mode=gameMode(b.gameMode),marker=mode==="boss"?"[BOSS] ":mode==="risk"?"[RISK] ":"",title=marker+(clean(b.title,50)||"英語文法クイズ");
  for(let i=0;i<6;i++){const code=String(Math.floor(100000+Math.random()*900000));try{
   const rows=await db("quiz_rooms",{method:"POST",body:JSON.stringify({code,host_token:hostToken,title,questions})});
   return ok({roomId:rows[0].id,code,hostToken});
@@ -41,11 +41,12 @@ async function joinRoom(b:any){
 async function roomState(b:any){
  const roomId=id(b.roomId);if(!roomId)return fail("ルームが見つかりません。",400);
  const rooms=await db(`quiz_rooms?id=eq.${roomId}&select=*`);if(!rooms.length)return fail("ルームが終了したか、見つかりません。",404);
- const room=rooms[0],isHost=String(b.hostToken||"")===room.host_token,qs=safeQuestions(room.questions),index=Number(room.current_question),q=qs[index],mode=modeFromTitle(room.title),publicTitle=String(room.title||"").replace(/^\[(?:BLOCK|RUSH|FEVER)\] /,"");
+ const room=rooms[0],isHost=String(b.hostToken||"")===room.host_token,qs=safeQuestions(room.questions),index=Number(room.current_question),q=qs[index],mode=modeFromTitle(room.title),publicTitle=String(room.title||"").replace(/^\[(?:BLOCK|RUSH|FEVER|BOSS|RISK)\] /,"");
  const players=await db(`quiz_players?room_id=eq.${roomId}&select=id,name,score,streak&order=score.desc,joined_at.asc`);
  const answers=index>=0?await db(`quiz_answers?room_id=eq.${roomId}&question_index=eq.${index}&select=player_id,option_index,correct,points`):[];
+ const bossAnswers=mode==="boss"?await db(`quiz_answers?room_id=eq.${roomId}&correct=eq.true&select=id`):[],maxHp=Math.max(5,Math.ceil(qs.length*Math.max(players.length,1)*.6)),damage=bossAnswers.length,boss=mode==="boss"?{maxHp,damage,hp:Math.max(0,maxHp-damage)}:undefined;
  const publicQuestion=q?{type:q.type||"grammar",question:q.question,options:q.options,...((room.status==="reveal"||room.status==="finished"||isHost)?{answer:q.answer,explanation:q.explanation||""}:{})}:null;
- return ok({room:{id:room.id,code:room.code,title:publicTitle,gameMode:mode,status:room.status,currentQuestion:index,totalQuestions:qs.length,question:publicQuestion,questionStartedAt:room.question_started_at},players,answeredPlayerIds:answers.map((a:any)=>a.player_id),answerCount:answers.length,...(isHost?{questions:qs}:{})});
+ return ok({room:{id:room.id,code:room.code,title:publicTitle,gameMode:mode,status:room.status,currentQuestion:index,totalQuestions:qs.length,question:publicQuestion,questionStartedAt:room.question_started_at},players,answeredPlayerIds:answers.map((a:any)=>a.player_id),answerCount:answers.length,...(boss?{boss}:{}),...(isHost?{questions:qs}:{})});
 }
 async function hostAction(b:any){
  const roomId=id(b.roomId),token=clean(b.hostToken,80),command=String(b.command||"");
@@ -58,18 +59,18 @@ async function hostAction(b:any){
  await db(`quiz_rooms?id=eq.${roomId}`,{method:"PATCH",body:JSON.stringify(patch)});return ok({success:true});
 }
 async function submitAnswer(b:any){
- const roomId=id(b.roomId),playerId=id(b.playerId),option=Number(b.optionIndex),questionIndex=Number(b.questionIndex);
+ const roomId=id(b.roomId),playerId=id(b.playerId),option=Number(b.optionIndex),questionIndex=Number(b.questionIndex),wager=[1,2,3].includes(Number(b.wager))?Number(b.wager):1;
  const rooms=await db(`quiz_rooms?id=eq.${roomId}&status=eq.question&select=questions,current_question,question_started_at,title`);if(!rooms.length||rooms[0].current_question!==questionIndex)return fail("この問題の回答時間は終了しました。",409);
  const players=await db(`quiz_players?id=eq.${playerId}&room_id=eq.${roomId}&select=score,streak`);if(!players.length)return fail("参加者を確認できません。",403);
  const q=safeQuestions(rooms[0].questions)[questionIndex];if(!q||option<0||option>3)return fail("回答が正しくありません。",400);
- const correct=option===q.answer,elapsed=Math.max(0,Date.now()-new Date(rooms[0].question_started_at).getTime()),mode=modeFromTitle(rooms[0].title),speedPoints=correct?(mode==="rush"?Math.max(200,1200-Math.floor(elapsed/18)):Math.max(400,1000-Math.floor(elapsed/30))):0,streak=correct?Number(players[0].streak)+1:0,streakBonus=correct?Math.min(streak*25,150):0,boost=(questionIndex+1)%3===0,modeMultiplier=mode==="rush"&&elapsed<=7000?1.2:mode==="fever"?Math.min(1+Math.max(0,streak-1)*.15,2):1,basePoints=Math.round((speedPoints+streakBonus)*(boost?1.5:1)),points=correct?Math.round(basePoints*modeMultiplier):0,modeBonus=Math.max(0,points-basePoints);
+ const correct=option===q.answer,elapsed=Math.max(0,Date.now()-new Date(rooms[0].question_started_at).getTime()),mode=modeFromTitle(rooms[0].title),speedPoints=correct?Math.max(400,1000-Math.floor(elapsed/30)):0,streak=correct?Number(players[0].streak)+1:0,streakBonus=correct?Math.min(streak*25,150):0,boost=(questionIndex+1)%3===0,basePoints=Math.round((speedPoints+streakBonus)*(boost?1.5:1)),riskWager=mode==="risk"?wager:1,penalty=mode==="risk"&&!correct?(riskWager-1)*250:0,points=correct?basePoints*riskWager:-penalty,modeBonus=points-(correct?basePoints:0);
  try{await db("quiz_answers",{method:"POST",body:JSON.stringify({room_id:roomId,player_id:playerId,question_index:questionIndex,option_index:option,correct,points})});}
  catch{return fail("すでに回答しています。",409)}
  await db(`quiz_players?id=eq.${playerId}`,{method:"PATCH",body:JSON.stringify({score:Number(players[0].score)+points,streak})});
  return ok({correct,points,speedPoints,streakBonus,streak,boost,modeBonus});
 }
-function gameMode(v:any):"normal"|"rush"|"fever"{return v==="rush"||v==="fever"?v:"normal"}
-function modeFromTitle(v:any):"normal"|"rush"|"fever"{const s=String(v||"");return s.startsWith("[RUSH] ")?"rush":s.startsWith("[FEVER] ")?"fever":"normal"}
+function gameMode(v:any):"normal"|"boss"|"risk"{return v==="boss"||v==="risk"?v:"normal"}
+function modeFromTitle(v:any):"normal"|"boss"|"risk"{const s=String(v||"");return s.startsWith("[BOSS] ")?"boss":s.startsWith("[RISK] ")?"risk":"normal"}
 function safeQuestions(v:any):Question[]{return Array.isArray(v)?v.slice(0,20).filter(q=>q&&typeof q.question==="string"&&Array.isArray(q.options)&&q.options.length===4&&Number.isInteger(q.answer)&&q.answer>=0&&q.answer<4).map(q=>({type:q.type==="speaking"?"speaking":"grammar",question:clean(q.question,300),options:q.options.map((x:any)=>clean(x,120)),answer:q.type==="speaking"?0:q.answer,explanation:clean(q.explanation,300)})):[]}
 function clean(v:any,max:number){return typeof v==="string"?v.replace(/[\u0000-\u001f]/g," ").trim().slice(0,max):""}
 function id(v:any){const s=String(v||"");return /^[0-9a-f-]{36}$/i.test(s)?s:""}
