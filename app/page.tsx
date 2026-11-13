@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import QRCode from "qrcode";
+import { recordLearningActivity } from "./speakup-control";
 
 type Message = { role: "user" | "assistant"; text: string };
 type Mode = "grammar" | "free" | "custom";
@@ -421,6 +422,7 @@ export default function Home() {
       const next = [session, ...sessions].slice(0, 30);
       setSessions(next);
       localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      void recordLearningActivity();
       setLessonReview(result.review);
       setNotice("");
     } catch (error) {
