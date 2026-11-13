@@ -521,6 +521,24 @@
   color: #c9f36a;
   letter-spacing: 3px;
 }
+.musicToggle {
+  flex: 0 0 auto;
+  border: 1px solid #ffffff55;
+  border-radius: 999px;
+  background: #ffffff12;
+  color: #c5c9d8;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 1000;
+  letter-spacing: .6px;
+  box-shadow: none;
+}
+.musicToggle.on {
+  border-color: #c9f36a;
+  background: #c9f36a;
+  color: #182033;
+  box-shadow: 0 0 18px #c9f36a55;
+}
 .lobby {
   text-align: center;
   padding: 55px 20px;

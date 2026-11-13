@@ -19,6 +19,8 @@ export async function POST(request: NextRequest) {
 
     const configuredModel = (process.env.GEMINI_TTS_MODEL || "").replace(/^models\//, "");
     const geminiModels = Array.from(new Set([
+      "gemini-3.8-flash-lite-tts",
+      "gemini-3.8-flash-tts",
       configuredModel,
       "gemini-3.1-flash-tts-preview",
       "gemini-2.5-flash-preview-tts",

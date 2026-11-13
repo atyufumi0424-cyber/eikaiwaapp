@@ -106,8 +106,10 @@ export default function GroupQuiz() {
   } | null>(null);
   const [bossHit, setBossHit] = useState(false);
   const [bossLanguage, setBossLanguage] = useState<"ja" | "en">("ja");
+  const [musicOn, setMusicOn] = useState(true);
   const [joinQr, setJoinQr] = useState("");
   const stageRef = useRef<HTMLElement | null>(null);
+  const musicContext = useRef<AudioContext | null>(null);
   const previousBossHp = useRef<number | null>(null);
   const spokenBossPhase = useRef("");
   useEffect(() => {
@@ -178,6 +180,63 @@ export default function GroupQuiz() {
     spokenBossPhase.current = phase;
     void playBossVoice(bossVoiceLine(phase, bossLanguage), bossLanguage);
   }, [state?.boss?.hp, state?.room.gameMode, hostToken, bossLanguage]);
+  useEffect(() => {
+    const status = state?.room.status;
+    if (!musicOn || !roomId || !status || status === "finished") return;
+    const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioCtor) return;
+    const context = musicContext.current || new AudioCtor();
+    musicContext.current = context;
+    const master = context.createGain();
+    master.gain.setValueAtTime(0.0001, context.currentTime);
+    master.gain.exponentialRampToValueAtTime(state?.room.gameMode === "boss" ? 0.075 : 0.052, context.currentTime + .7);
+    master.connect(context.destination);
+    let stopped = false;
+    let bar = 0;
+    const playBar = () => {
+      if (stopped || context.state !== "running") return;
+      const lobby = status === "lobby";
+      const boss = state?.room.gameMode === "boss" && !lobby;
+      const notes = lobby ? [261.63, 329.63, 392, 329.63] : boss ? [146.83, 174.61, 196, 233.08] : [293.66, 369.99, 440, 392];
+      const beat = lobby ? .46 : boss ? .34 : .38;
+      const start = context.currentTime + .04;
+      notes.forEach((frequency, index) => {
+        const time = start + index * beat;
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        oscillator.type = boss ? "sawtooth" : index % 2 ? "triangle" : "sine";
+        oscillator.frequency.setValueAtTime(frequency * (bar % 4 === 3 && index === 3 ? 2 : 1), time);
+        gain.gain.setValueAtTime(.0001, time);
+        gain.gain.exponentialRampToValueAtTime(boss ? .16 : .2, time + .035);
+        gain.gain.exponentialRampToValueAtTime(.0001, time + beat * .82);
+        oscillator.connect(gain); gain.connect(master);
+        oscillator.start(time); oscillator.stop(time + beat);
+      });
+      if (boss) {
+        [0, 2].forEach((index) => {
+          const time = start + index * beat;
+          const bass = context.createOscillator(); const bassGain = context.createGain();
+          bass.type = "square"; bass.frequency.value = notes[index] / 2;
+          bassGain.gain.setValueAtTime(.09, time); bassGain.gain.exponentialRampToValueAtTime(.0001, time + beat * .9);
+          bass.connect(bassGain); bassGain.connect(master); bass.start(time); bass.stop(time + beat);
+        });
+      }
+      bar++;
+    };
+    void context.resume().then(playBar).catch(() => undefined);
+    const timer = window.setInterval(playBar, status === "lobby" ? 1900 : state?.room.gameMode === "boss" ? 1450 : 1600);
+    return () => {
+      stopped = true; window.clearInterval(timer);
+      master.gain.cancelScheduledValues(context.currentTime);
+      master.gain.setTargetAtTime(.0001, context.currentTime, .12);
+      window.setTimeout(() => master.disconnect(), 500);
+    };
+  }, [musicOn, roomId, state?.room.status, state?.room.gameMode]);
+
+  function toggleMusic() {
+    setMusicOn((on) => !on);
+    if (!musicOn) void musicContext.current?.resume();
+  }
 
   async function api(path: string, data: any) {
     let lastError: unknown;
@@ -845,6 +904,9 @@ export default function GroupQuiz() {
           参加コード <strong>{state.room.code}</strong>
         </span>
         <span>{state.players.length}/40人</span>
+        <button className={`musicToggle ${musicOn ? "on" : ""}`} onClick={toggleMusic} aria-pressed={musicOn} aria-label="BGMのオン・オフ">
+          {musicOn ? "♫ BGM ON" : "♩ BGM OFF"}
+        </button>
       </header>
       {state.room.status === "lobby" && (
         <section className="lobby">
