@@ -1,5 +1,5 @@
 "use client";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import "./group.css";
 type Question = {
   type?: "grammar" | "speaking";
@@ -103,6 +103,9 @@ export default function GroupQuiz() {
     boost: boolean;
     modeBonus: number;
   } | null>(null);
+  const [bossHit, setBossHit] = useState(false);
+  const previousBossHp = useRef<number | null>(null);
+  const spokenBossPhase = useRef("");
   useEffect(() => {
     if (!roomId) return;
     const load = () => void getState();
@@ -117,6 +120,24 @@ export default function GroupQuiz() {
     setLastResult(null);
     setWager(1);
   }, [state?.room.currentQuestion]);
+  useEffect(() => {
+    if (!state?.boss || state.room.gameMode !== "boss") return;
+    const oldHp = previousBossHp.current;
+    if (oldHp !== null && state.boss.hp < oldHp) {
+      setBossHit(true);
+      const timer = setTimeout(() => setBossHit(false), 650);
+      previousBossHp.current = state.boss.hp;
+      return () => clearTimeout(timer);
+    }
+    previousBossHp.current = state.boss.hp;
+  }, [state?.boss?.hp, state?.room.gameMode]);
+  useEffect(() => {
+    if (!state?.boss || state.room.gameMode !== "boss" || !hostToken) return;
+    const phase = bossPhase(state.boss);
+    if (phase === spokenBossPhase.current) return;
+    spokenBossPhase.current = phase;
+    void playBossVoice(bossVoiceLine(phase));
+  }, [state?.boss?.hp, state?.room.gameMode, hostToken]);
 
   async function api(path: string, data: any) {
     let lastError: unknown;
@@ -375,6 +396,12 @@ export default function GroupQuiz() {
           <b>Color Stage</b>
         </header>
         <section className="groupHero">
+          <div className="heroBoss" aria-hidden="true">
+            <div className="heroBossAura" />
+            <img src="/boss/boss-strong.webp" alt="" />
+            <span>NEW MODE</span>
+            <b>CLASS BOSS BATTLE</b>
+          </div>
           <div className="wordOrbit" aria-hidden="true">
             <i>GO!</i>
             <i>ABC</i>
@@ -763,7 +790,7 @@ export default function GroupQuiz() {
     q = state.room.question,
     answered = state.answeredPlayerIds.includes(playerId);
   return (
-    <main className="groupApp gameScreen">
+    <main className={`groupApp gameScreen ${state.room.gameMode === "boss" ? "bossTheme" : ""}`}>
       <header className="gameHeader">
         <b>{state.room.title}</b>
         <span>
@@ -810,10 +837,16 @@ export default function GroupQuiz() {
               </b>
             </div>
             {state.room.gameMode === "boss" && state.boss && (
-              <div className="bossBattle">
-                <div><b>👾 ENGLISH BOSS</b><span>残りHP {state.boss.hp}/{state.boss.maxHp}</span></div>
-                <div className="bossHp"><i style={{width:`${Math.max(0,state.boss.hp/state.boss.maxHp*100)}%`}} /></div>
-                <small>みんなの正解が1ダメージ！力を合わせて倒そう</small>
+              <div className={`bossArena phase-${bossPhase(state.boss)} ${bossHit ? "takingHit" : ""} ${state.boss.hp === 0 ? "defeated" : ""}`}>
+                <div className="bossAtmosphere"><i/><i/><i/><i/><i/></div>
+                <div className="bossIdentity"><span>CLASS RAID BATTLE</span><b>WORD TITAN <em>“LEX”</em></b><small>{bossMoodLine(bossPhase(state.boss))}</small></div>
+                <div className="bossStage"><div className="bossSpeech">{bossCaption(bossPhase(state.boss))}</div><img src={bossImage(state.boss)} alt="英語ボス LEX" />{bossHit && <div className="damageFlash">−1</div>}</div>
+                <div className="bossHud">
+                  <div><b>BOSS HP</b><strong>{state.boss.hp}<small> / {state.boss.maxHp}</small></strong></div>
+                  <div className="bossHp"><i style={{width:`${Math.max(0,state.boss.hp/state.boss.maxHp*100)}%`}} /></div>
+                  <footer><span>👥 {state.players.length}人参加</span><span>⚔️ 累計{state.boss.damage}ダメージ</span><span>正解1つ＝1ダメージ</span>{isHost && <button onClick={() => playBossVoice(bossVoiceLine(bossPhase(state.boss!)))}>🔊 ボイス</button>}</footer>
+                </div>
+                {state.boss.hp === 0 && <div className="defeatBurst"><i/><i/><i/><i/><i/><i/><strong>BOSS DEFEATED!</strong><span>クラス全員でLEXを倒した！</span></div>}
               </div>
             )}
             {state.room.gameMode === "risk" && !isHost && state.room.status === "question" && selected === null && (
@@ -1011,6 +1044,38 @@ function speedTitle(points: number) {
     : points >= 700
       ? "🚀 SPEEDY!"
       : "✨ CORRECT!";
+}
+function bossPhase(boss: { hp: number; maxHp: number }) {
+  if (boss.hp <= 0) return "down";
+  const ratio = boss.hp / boss.maxHp;
+  return ratio > 0.65 ? "strong" : ratio > 0.3 ? "hurt" : "critical";
+}
+function bossImage(boss: { hp: number; maxHp: number }) {
+  const phase = bossPhase(boss);
+  return phase === "strong" ? "/boss/boss-strong.webp" : phase === "hurt" ? "/boss/boss-hurt.webp" : "/boss/boss-critical.webp";
+}
+function bossCaption(phase: string) {
+  return phase === "strong" ? "Your words cannot defeat me!" : phase === "hurt" ? "Not bad... Keep trying!" : phase === "critical" ? "Wait... You are too strong!" : "You mastered English together!";
+}
+function bossMoodLine(phase: string) {
+  return phase === "strong" ? "自信満々。みんなの英語力を試している" : phase === "hurt" ? "少し焦っている。あと一押し！" : phase === "critical" ? "かなり弱っている。総攻撃のチャンス！" : "撃破成功！チームワークの勝利";
+}
+function bossVoiceLine(phase: string) {
+  return phase === "strong" ? "Your words cannot defeat me! Show me what your class can do!" : phase === "hurt" ? "Not bad! Your English is stronger than I expected." : phase === "critical" ? "Wait! You are too strong! I cannot hold on much longer!" : "Impossible! You mastered English together. The victory is yours!";
+}
+async function playBossVoice(text: string) {
+  try {
+    const response = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, speed: "normal", style: "boss" }) });
+    if (!response.ok) throw new Error();
+    const audio = new Audio(URL.createObjectURL(await response.blob()));
+    audio.volume = 0.9;
+    await audio.play();
+  } catch {
+    if (!("speechSynthesis" in window)) return;
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US"; utterance.rate = 0.92; utterance.pitch = 0.65;
+    speechSynthesis.cancel(); speechSynthesis.speak(utterance);
+  }
 }
 function emptyQuestion(): Question {
   return {
