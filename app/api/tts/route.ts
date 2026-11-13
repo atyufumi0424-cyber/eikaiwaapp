@@ -11,6 +11,7 @@ export async function POST(request: NextRequest) {
       : "";
     const speed = body.speed === "slow" ? "slow" : "normal";
     const style = body.style === "boss" ? "boss" : "teacher";
+    const language = body.language === "ja" ? "ja" : "en";
     if (!text) return NextResponse.json({ error: "読み上げる文章がありません。" }, { status: 400 });
 
     const geminiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "")
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest) {
     ].filter(Boolean)));
 
     for (const key of shuffled(geminiKeys)) {
-      const result = await geminiSpeech(key, text, speed, geminiModels, style);
+      const result = await geminiSpeech(key, text, speed, geminiModels, style, language);
       if (result) {
         return new NextResponse(result.audio, {
           headers: {
@@ -82,6 +83,7 @@ async function geminiSpeech(
   speed: "slow" | "normal",
   models: string[],
   style: "teacher" | "boss",
+  language: "ja" | "en",
 ) {
   const voice = process.env.GEMINI_TTS_VOICE || "Kore";
   const pace = speed === "slow"
@@ -101,7 +103,9 @@ async function geminiSpeech(
           contents: [{
             parts: [{
               text: style === "boss"
-                ? `Perform the transcript as a powerful, deep, cinematic but friendly fantasy game boss. Sound expressive and natural, never robotic, and keep the English very clear for students. ${pace}\n\nTranscript:\n${text}`
+                ? language === "ja"
+                  ? `次の台詞を、迫力のある低い声のファンタジーゲームボスとして、日本語で自然に演じてください。感情豊かで映画のように、ただし怖すぎず、生徒がはっきり聞き取れる発音にしてください。機械的には話さないでください。${pace}\n\n台詞：\n${text}`
+                  : `Perform the transcript as a powerful, deep, cinematic but friendly fantasy game boss. Sound expressive and natural, never robotic, and keep the English very clear for students. ${pace}\n\nTranscript:\n${text}`
                 : `Read the transcript in natural American English. Use a warm, friendly English teacher voice. ${pace}\n\nTranscript:\n${text}`,
             }],
           }],
