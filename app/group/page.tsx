@@ -1,5 +1,6 @@
 "use client";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import QRCode from "qrcode";
 import "./group.css";
 type Question = {
   type?: "grammar" | "speaking";
@@ -105,9 +106,30 @@ export default function GroupQuiz() {
   } | null>(null);
   const [bossHit, setBossHit] = useState(false);
   const [bossLanguage, setBossLanguage] = useState<"ja" | "en">("ja");
+  const [joinQr, setJoinQr] = useState("");
   const stageRef = useRef<HTMLElement | null>(null);
   const previousBossHp = useRef<number | null>(null);
   const spokenBossPhase = useRef("");
+  useEffect(() => {
+    const joinCode = new URLSearchParams(window.location.search).get("join")?.replace(/\D/g, "").slice(0, 6);
+    if (joinCode?.length === 6) {
+      setCode(joinCode);
+      setRole("player");
+    }
+  }, []);
+  useEffect(() => {
+    if (!state?.room.code || state.room.status !== "lobby") {
+      setJoinQr("");
+      return;
+    }
+    const joinUrl = `${window.location.origin}/group?join=${state.room.code}`;
+    QRCode.toDataURL(joinUrl, {
+      width: 360,
+      margin: 2,
+      errorCorrectionLevel: "M",
+      color: { dark: "#182033", light: "#ffffff" },
+    }).then(setJoinQr).catch(() => setJoinQr(""));
+  }, [state?.room.code, state?.room.status]);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -830,9 +852,15 @@ export default function GroupQuiz() {
             {isHost ? "参加を待っています" : "先生が開始するまで待ってね！"}
           </h1>
           <div className="codeBox">
-            <small>参加コード</small>
-            <strong>{state.room.code}</strong>
-            <span>eikaiwaapp.vercel.app/group</span>
+            <div className="joinDetails">
+              <small>参加コード</small>
+              <strong>{state.room.code}</strong>
+              <span>QRコードを読み取ると参加コードが自動入力されます</span>
+            </div>
+            <div className="joinQr">
+              {joinQr ? <img src={joinQr} alt={`参加コード ${state.room.code} のQRコード`} /> : <div className="qrLoading">QR<br/>準備中</div>}
+              <b>スマホで参加</b>
+            </div>
           </div>
           <div className="playerCloud">
             {state.players.map((p) => (
