@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import { controlRequest, notificationDeviceId } from "./speakup-control";
 
 type Status = {
@@ -13,10 +14,9 @@ export default function AppServices() {
   const [pushState, setPushState] = useState<"checking" | "off" | "on" | "unsupported">("checking");
   const [pushBusy, setPushBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [path, setPath] = useState("");
+  const path = usePathname() || "";
 
   useEffect(() => {
-    setPath(location.pathname);
     let active = true;
     const load = () => controlRequest({ action: "status" }).then((value) => active && setStatus(value)).catch(() => undefined);
     load();
