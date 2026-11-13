@@ -527,6 +527,86 @@
   background: radial-gradient(#ded6ff 2px, transparent 2px);
   background-size: 22px 22px;
 }
+.lobbyHeading {
+  position: relative;
+  z-index: 2;
+  margin: 0 auto 26px;
+  color: #fff;
+}
+.lobbyHeading > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 13px;
+  border: 1px solid #8f7cff;
+  border-radius: 999px;
+  background: #6c4cff33;
+  color: #c9f36a;
+  font-size: 11px;
+  font-weight: 1000;
+  letter-spacing: 2px;
+  box-shadow: 0 0 22px #6c4cff88;
+}
+.lobbyHeading > span i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c9f36a;
+  box-shadow: 0 0 12px #c9f36a;
+  animation: liveBlink .8s ease-in-out infinite alternate;
+}
+.lobbyHeading h1 {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 10px;
+  margin: 13px 0 5px;
+  color: #fff;
+  font-size: clamp(34px, 5vw, 58px);
+  letter-spacing: -.045em;
+  line-height: 1.05;
+  text-shadow: 0 4px 0 #6c4cff, 0 0 30px #8f7cffaa;
+}
+.lobbyHeading h1 > b {
+  display: inline-flex;
+  gap: 5px;
+}
+.lobbyHeading h1 > b i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c9f36a;
+  animation: waitingDot 1.15s ease-in-out infinite;
+}
+.lobbyHeading h1 > b i:nth-child(2) { animation-delay: .16s; }
+.lobbyHeading h1 > b i:nth-child(3) { animation-delay: .32s; }
+.lobbyHeading p {
+  margin: 0;
+  color: #c8c3dd;
+  font-weight: 800;
+}
+.lobbyStart {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 11px;
+}
+.lobbyStart .bigAction { margin-top: 4px; }
+.lobbyStart .bigAction:disabled {
+  border-color: #77708f;
+  background: #332957;
+  color: #aca6be;
+  box-shadow: 4px 4px 0 #080612;
+}
+.lobbyStart small {
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: #ffffff12;
+  color: #c8c3dd;
+  font-weight: 800;
+}
+@keyframes liveBlink { to { opacity: .35; transform: scale(.72); } }
+@keyframes waitingDot { 0%,60%,100% { transform: translateY(0); opacity: .35; } 30% { transform: translateY(-8px); opacity: 1; } }
 .codeBox {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 190px;
@@ -846,6 +926,17 @@
   }
   .codeBox strong {
     font-size: 42px;
+  }
+  .lobbyHeading h1 {
+    align-items: center;
+    font-size: 34px;
+  }
+  .lobbyHeading h1 > b i {
+    width: 6px;
+    height: 6px;
+  }
+  .lobbyHeading p {
+    font-size: 12px;
   }
   .codeBox {
     grid-template-columns: 1fr;
