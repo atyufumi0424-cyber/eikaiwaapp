@@ -61,5 +61,7 @@ export default function AppServices() {
 function base64Key(value: string) {
   const padding = "=".repeat((4 - value.length % 4) % 4);
   const raw = atob((value + padding).replace(/-/g, "+").replace(/_/g, "/"));
-  return Uint8Array.from([...raw].map((char) => char.charCodeAt(0)));
+  const bytes = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index++) bytes[index] = raw.charCodeAt(index);
+  return bytes;
 }
