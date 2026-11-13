@@ -528,15 +528,22 @@
   background-size: 22px 22px;
 }
 .codeBox {
-  display: flex;
-  flex-direction: column;
-  width: min(460px, 90%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 190px;
+  align-items: center;
+  gap: 24px;
+  width: min(680px, 90%);
   margin: 25px auto;
   padding: 24px;
   background: #fff;
   border: 3px solid #182033;
   border-radius: 26px;
   box-shadow: 8px 8px 0 #ff73a5;
+}
+.joinDetails {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
 }
 .codeBox strong {
   font-size: 58px;
@@ -545,6 +552,38 @@
 }
 .codeBox span {
   color: #737a90;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.joinQr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.joinQr img,
+.qrLoading {
+  width: 170px;
+  height: 170px;
+  box-sizing: border-box;
+  border: 3px solid #182033;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 5px 5px 0 #42d7e8;
+}
+.joinQr img {
+  display: block;
+  padding: 7px;
+}
+.joinQr b {
+  margin-top: 3px;
+  font-size: 12px;
+}
+.qrLoading {
+  display: grid;
+  place-items: center;
+  color: #6c4cff;
+  font-weight: 1000;
 }
 .playerCloud {
   max-width: 800px;
@@ -807,6 +846,15 @@
   }
   .codeBox strong {
     font-size: 42px;
+  }
+  .codeBox {
+    grid-template-columns: 1fr;
+    gap: 17px;
+  }
+  .joinQr img,
+  .qrLoading {
+    width: 190px;
+    height: 190px;
   }
   .joinCard {
     margin-top: 35px;
