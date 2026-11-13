@@ -10,6 +10,7 @@ export async function POST(request: NextRequest) {
       ? body.text.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 300)
       : "";
     const speed = body.speed === "slow" ? "slow" : "normal";
+    const style = body.style === "boss" ? "boss" : "teacher";
     if (!text) return NextResponse.json({ error: "読み上げる文章がありません。" }, { status: 400 });
 
     const geminiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || "")
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
     ].filter(Boolean)));
 
     for (const key of shuffled(geminiKeys)) {
-      const result = await geminiSpeech(key, text, speed, geminiModels);
+      const result = await geminiSpeech(key, text, speed, geminiModels, style);
       if (result) {
         return new NextResponse(result.audio, {
           headers: {
@@ -80,6 +81,7 @@ async function geminiSpeech(
   text: string,
   speed: "slow" | "normal",
   models: string[],
+  style: "teacher" | "boss",
 ) {
   const voice = process.env.GEMINI_TTS_VOICE || "Kore";
   const pace = speed === "slow"
@@ -98,7 +100,9 @@ async function geminiSpeech(
         body: JSON.stringify({
           contents: [{
             parts: [{
-              text: `Read the transcript in natural American English. Use a warm, friendly English teacher voice. ${pace}\n\nTranscript:\n${text}`,
+              text: style === "boss"
+                ? `Perform the transcript as a powerful, deep, cinematic but friendly fantasy game boss. Sound expressive and natural, never robotic, and keep the English very clear for students. ${pace}\n\nTranscript:\n${text}`
+                : `Read the transcript in natural American English. Use a warm, friendly English teacher voice. ${pace}\n\nTranscript:\n${text}`,
             }],
           }],
           generationConfig: {
