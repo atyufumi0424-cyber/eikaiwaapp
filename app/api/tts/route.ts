@@ -96,6 +96,49 @@ async function geminiSpeech(
     // Do not make the learner wait too long for a single provider/model.
     const timer = setTimeout(() => controller.abort(), 7000);
     try {
+      if (model.startsWith("gemini-3.8-")) {
+        const speechStyle = style === "boss"
+          ? language === "ja"
+            ? `迫力のある低い声のファンタジーゲームボスとして、日本語で自然に演じる。感情豊かで映画のように、怖すぎず、生徒がはっきり聞き取れる発音。${pace}`
+            : `A powerful, deep, cinematic but friendly fantasy game boss. Expressive and natural, with very clear English for students. ${pace}`
+          : `A warm, friendly American English teacher. Natural and conversational, with clear pronunciation for English learners. ${pace}`;
+        const response = await fetch(
+          "https://generativelanguage.googleapis.com/v1beta/interactions",
+          {
+            method: "POST",
+            headers: {
+              "x-goog-api-key": key,
+              "Content-Type": "application/json",
+              "Api-Revision": "2026-05-20",
+            },
+            body: JSON.stringify({
+              model,
+              input: [{
+                type: "user_input",
+                content: [{
+                  type: "text",
+                  // Gemini 3.8 reads this field verbatim. Never put voice directions here.
+                  text,
+                  annotations: [{ type: "speech_metadata", style: speechStyle }],
+                }],
+              }],
+              response_format: { type: "audio", mime_type: "audio/l16", sample_rate: 24000 },
+              generation_config: { speech_config: [{ voice }] },
+              store: false,
+            }),
+            signal: controller.signal,
+          },
+        );
+        if (!response.ok) continue;
+        const data = await response.json();
+        const audioPart = findAudioPart(data);
+        if (!audioPart?.data) continue;
+        const raw = Buffer.from(audioPart.data, "base64");
+        const mime = String(audioPart.mime_type || audioPart.mimeType || "audio/l16");
+        const sampleRate = Number(audioPart.sample_rate || mime.match(/rate=(\d+)/i)?.[1]) || 24000;
+        return { audio: /wav/i.test(mime) ? raw : pcmToWav(raw, sampleRate), model };
+      }
+
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
       {
@@ -141,6 +184,19 @@ async function geminiSpeech(
     } finally {
       clearTimeout(timer);
     }
+  }
+  return null;
+}
+
+function findAudioPart(value: any): any {
+  if (!value || typeof value !== "object") return null;
+  if (typeof value.data === "string" && (value.type === "audio" || value.mime_type || value.mimeType)) {
+    return value;
+  }
+  if (value.output_audio && typeof value.output_audio.data === "string") return value.output_audio;
+  for (const child of Array.isArray(value) ? value : Object.values(value)) {
+    const match = findAudioPart(child);
+    if (match) return match;
   }
   return null;
 }
