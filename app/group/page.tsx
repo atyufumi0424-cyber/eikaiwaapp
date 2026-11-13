@@ -848,9 +848,14 @@ export default function GroupQuiz() {
       </header>
       {state.room.status === "lobby" && (
         <section className="lobby">
-          <h1>
-            {isHost ? "参加を待っています" : "先生が開始するまで待ってね！"}
-          </h1>
+          <div className="lobbyHeading">
+            <span><i/> LIVE LOBBY</span>
+            <h1>
+              {isHost ? "参加者を待っています" : "まもなくスタート！"}
+              <b aria-hidden="true"><i/><i/><i/></b>
+            </h1>
+            <p>{isHost ? "QRコードを見せて、みんなをステージに招待しよう" : "先生がクイズを開始するまで、このまま待ってね"}</p>
+          </div>
           <div className="codeBox">
             <div className="joinDetails">
               <small>参加コード</small>
@@ -868,13 +873,16 @@ export default function GroupQuiz() {
             ))}
           </div>
           {isHost && (
-            <button
-              className="bigAction"
-              disabled={!state.players.length || loading}
-              onClick={() => command("start")}
-            >
-              クイズを開始する
-            </button>
+            <div className="lobbyStart">
+              <button
+                className="bigAction"
+                disabled={!state.players.length || loading}
+                onClick={() => command("start")}
+              >
+                クイズを開始する
+              </button>
+              {!state.players.length && <small>参加者が1人入ると開始できます</small>}
+            </div>
           )}
         </section>
       )}
